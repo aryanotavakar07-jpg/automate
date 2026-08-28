@@ -5,6 +5,7 @@ import logging
 import subprocess
 
 from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi.responses import RedirectResponse
 import httpx
 import uvicorn
 
@@ -39,6 +40,12 @@ async def startup_event():
     for i in range(settings.WORKER_COUNT):
         asyncio.create_task(worker_loop(lead_queue, i))
     logger.info(f"Started {settings.WORKER_COUNT} workers")
+
+
+@app.get("/")
+async def root():
+    """Redirects home page visits directly to the QR Code login page."""
+    return RedirectResponse(url="/qr")
 
 
 @app.get("/qr")
