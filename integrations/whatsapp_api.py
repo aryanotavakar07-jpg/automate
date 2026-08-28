@@ -18,10 +18,17 @@ async def send_whatsapp_template(to_number: str, template_name: str, body_params
             f"📋 *Answers:*\n{answers}"
         )
     elif template_name == "lead_welcome":
-        name, campaign = body_params if len(body_params) == 2 else ("Customer", "Oberoi Mall Project")
+        name = body_params[0] if len(body_params) >= 1 else "Customer"
+        config_val = body_params[2] if len(body_params) >= 3 and body_params[2] else ""
+        
+        if config_val:
+            bhk_text = f"*{config_val} property at GOREGAON EAST near OBEROI MALL*"
+        else:
+            bhk_text = "*property at GOREGAON EAST near OBEROI MALL*"
+
         message_text = (
             f"Hello {name}! 👋\n\n"
-            f"Thank you for your interest. We have received your enquiry for a *XYZ BHK property at GOREGAON EAST near OBEROI MALL*.\n\n"
+            f"Thank you for your interest. We have received your enquiry for a {bhk_text}.\n\n"
             f"Would you like us to share the *official E-Brochure & Floor Plans*, or would you prefer to *schedule a Site Visit*?"
         )
     else:

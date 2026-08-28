@@ -60,10 +60,11 @@ async def process_lead(leadgen_id: str, queue: "asyncio.Queue" = None):
         # 2. Automated message to the client
         if phone:
             try:
+                config_val = parsed.get("configuration") or ""
                 await send_whatsapp_template(
                     to_number=phone,
                     template_name=settings.CLIENT_TEMPLATE_NAME,
-                    body_params=[name, campaign],
+                    body_params=[name, campaign, config_val],
                 )
                 logger.info("WhatsApp welcome message sent to client successfully")
             except Exception as client_wa_err:

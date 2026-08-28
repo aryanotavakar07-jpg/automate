@@ -27,6 +27,7 @@ def parse_lead_fields(lead_data: dict) -> dict:
         "created_time": lead_data.get("created_time", ""),
         "full_name": None,
         "phone_number": None,
+        "configuration": None,
         "answers": {},
     }
 
@@ -41,7 +42,11 @@ def parse_lead_fields(lead_data: dict) -> dict:
         elif key in ("phone_number", "phone"):
             parsed["phone_number"] = value
         else:
-            # every other custom question the person answered on the form
             parsed["answers"][name] = value
+            # Check if this question is about configuration or BHK selection
+            if any(t in key for t in ("config", "bhk", "type", "flat", "room", "size", "requirement", "option", "unit")):
+                parsed["configuration"] = value
+            elif "bhk" in str(value).lower():
+                parsed["configuration"] = value
 
     return parsed
