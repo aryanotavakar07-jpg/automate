@@ -1,0 +1,28 @@
+{
+  "name": "lead-automation",
+  "version": "1.0.0",
+  "description": "A self-hosted, always-on Python service that: 1. Receives an instant webhook the moment someone submits your Meta lead form 2. Fetches the full lead (campaign name, name, phone, every question/answer) 3. Sends you a WhatsApp alert 4. Sends the client an automated WhatsApp welcome message 5. Stores everything in Airtable",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aryanotavakar07-jpg/automate.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/aryanotavakar07-jpg/automate/issues"
+  },
+  "homepage": "https://github.com/aryanotavakar07-jpg/automate#readme",
+  "dependencies": {
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

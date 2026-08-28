@@ -8,6 +8,10 @@ leads.db
 *.sqlite
 *.sqlite3
 
+# Node dependencies & session
+node_modules/
+baileys_auth_info/
+
 # Python virtual environment & cache
 venv/
 .venv/
