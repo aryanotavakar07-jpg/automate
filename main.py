@@ -2,8 +2,10 @@ import asyncio
 import hmac
 import hashlib
 import logging
+import subprocess
 
 from fastapi import FastAPI, Request, Response, HTTPException
+import httpx
 import uvicorn
 
 import db
@@ -21,6 +23,13 @@ lead_queue: asyncio.Queue = asyncio.Queue()
 async def startup_event():
     db.init_db()
 
+    # Automatically start Node WhatsApp QR Server subprocess if not running
+    try:
+        subprocess.Popen(["node", "whatsapp_server.js"])
+        logger.info("Started Node WhatsApp QR Server subprocess")
+    except Exception as err:
+        logger.error(f"Failed to launch whatsapp_server.js: {err}")
+
     # Recover anything that didn't finish before a restart/crash
     for leadgen_id in db.get_unfinished_leads(settings.MAX_RETRIES):
         await lead_queue.put(leadgen_id)
@@ -30,6 +39,20 @@ async def startup_event():
     for i in range(settings.WORKER_COUNT):
         asyncio.create_task(worker_loop(lead_queue, i))
     logger.info(f"Started {settings.WORKER_COUNT} workers")
+
+
+@app.get("/qr")
+async def qr_page():
+    """Exposes the WhatsApp QR code login webpage on your live server URL."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        try:
+            resp = await client.get("http://localhost:3000/qr")
+            return Response(content=resp.text, media_type="text/html")
+        except Exception as e:
+            return Response(
+                content="<h2 style='font-family:sans-serif;text-align:center;margin-top:20%;'>WhatsApp QR Server initializing... Please refresh in 5 seconds.</h2><script>setTimeout(() => location.reload(), 3000);</script>",
+                media_type="text/html",
+            )
 
 
 @app.get("/webhook")
