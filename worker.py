@@ -16,49 +16,64 @@ async def process_lead(leadgen_id: str, queue: "asyncio.Queue" = None):
 
         # Durable dedup check - protects against Meta re-delivering the same
         # webhook after a Render free-tier restart wipes the local SQLite log
-        if await lead_already_stored(leadgen_id):
-            logger.info(f"Lead {leadgen_id} already in Airtable, skipping (duplicate webhook)")
-            db.mark_status(leadgen_id, "done")
-            return
+        try:
+            if await lead_already_stored(leadgen_id):
+                logger.info(f"Lead {leadgen_id} already in Airtable, skipping (duplicate webhook)")
+                db.mark_status(leadgen_id, "done")
+                return
+        except Exception as err:
+            logger.warning(f"Airtable dedup check failed: {err}. Proceeding with processing...")
 
         raw = await fetch_lead_details(leadgen_id)
         parsed = parse_lead_fields(raw)
 
         phone = parsed["phone_number"]
-        name = parsed["full_name"] or "Unknown"
+        name = parsed["full_name"] or "Unknown Lead"
         campaign = parsed["campaign_name"]
         answers_text = "\n".join(f"{k}: {v}" for k, v in parsed["answers"].items()) or "N/A"
 
         # 1. Alert to you, the business owner
-        await send_whatsapp_template(
-            to_number=settings.OWNER_WHATSAPP_NUMBER,
-            template_name=settings.ALERT_TEMPLATE_NAME,
-            body_params=[campaign, name, phone or "N/A", answers_text],
-        )
+        try:
+            await send_whatsapp_template(
+                to_number=settings.OWNER_WHATSAPP_NUMBER,
+                template_name=settings.ALERT_TEMPLATE_NAME,
+                body_params=[campaign, name, phone or "N/A", answers_text],
+            )
+            logger.info("WhatsApp alert sent to owner successfully")
+        except Exception as wa_err:
+            logger.error(f"Failed to send owner WhatsApp alert: {wa_err}")
 
         # 2. Automated message to the client
         if phone:
-            await send_whatsapp_template(
-                to_number=phone,
-                template_name=settings.CLIENT_TEMPLATE_NAME,
-                body_params=[name, campaign],
-            )
+            try:
+                await send_whatsapp_template(
+                    to_number=phone,
+                    template_name=settings.CLIENT_TEMPLATE_NAME,
+                    body_params=[name, campaign],
+                )
+                logger.info("WhatsApp welcome message sent to client successfully")
+            except Exception as client_wa_err:
+                logger.error(f"Failed to send client WhatsApp message: {client_wa_err}")
         else:
             logger.warning(f"Lead {leadgen_id} has no phone number, skipping client message")
 
         # 3. Store everything in Airtable
-        await create_airtable_record(
-            {
-                "Lead ID": leadgen_id,
-                "Campaign Name": campaign,
-                "Ad Name": parsed["ad_name"],
-                "Form Name": parsed["form_name"],
-                "Client Name": name,
-                "Phone Number": phone or "",
-                "Form Answers": answers_text,
-                "Created Time": parsed["created_time"],
-            }
-        )
+        try:
+            await create_airtable_record(
+                {
+                    "Lead ID": str(leadgen_id),
+                    "Campaign Name": str(campaign),
+                    "Ad Name": str(parsed["ad_name"]),
+                    "Form Name": str(parsed["form_name"]),
+                    "Client Name": str(name),
+                    "Phone Number": str(phone or ""),
+                    "Form Answers": str(answers_text),
+                    "Created Time": str(parsed["created_time"]),
+                }
+            )
+            logger.info("Lead saved to Airtable successfully")
+        except Exception as airtable_err:
+            logger.error(f"Failed to save lead to Airtable: {airtable_err}")
 
         db.mark_status(leadgen_id, "done")
         logger.info(f"Lead {leadgen_id} processed successfully")
