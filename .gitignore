@@ -1,0 +1,23 @@
+# Environment files containing secrets
+.env
+*.env
+
+# SQLite Database
+leads.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Python virtual environment & cache
+venv/
+.venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.idea/
+.vscode/
