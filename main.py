@@ -5,7 +5,7 @@ import logging
 import subprocess
 
 from fastapi import FastAPI, Request, Response, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 import httpx
 import uvicorn
 
@@ -24,12 +24,13 @@ lead_queue: asyncio.Queue = asyncio.Queue()
 async def startup_event():
     db.init_db()
 
-    # Automatically start Node WhatsApp QR Server subprocess if not running
-    try:
-        subprocess.Popen(["node", "whatsapp_server.js"])
-        logger.info("Started Node WhatsApp QR Server subprocess")
-    except Exception as err:
-        logger.error(f"Failed to launch whatsapp_server.js: {err}")
+    # If Green API is not configured, try starting local Node WhatsApp QR Server
+    if not (settings.GREEN_API_INSTANCE_ID and settings.GREEN_API_TOKEN):
+        try:
+            subprocess.Popen(["node", "whatsapp_server.js"])
+            logger.info("Started Node WhatsApp QR Server subprocess")
+        except Exception as err:
+            logger.warning(f"Local whatsapp_server.js not launched: {err}")
 
     # Recover anything that didn't finish before a restart/crash
     for leadgen_id in db.get_unfinished_leads(settings.MAX_RETRIES):
@@ -42,9 +43,22 @@ async def startup_event():
     logger.info(f"Started {settings.WORKER_COUNT} workers")
 
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 async def root():
-    """Redirects home page visits directly to the QR Code login page."""
+    """Live dashboard landing page."""
+    if settings.GREEN_API_INSTANCE_ID and settings.GREEN_API_TOKEN:
+        return """
+        <html>
+            <head><title>Lead Automation Status</title></head>
+            <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;margin:0;">
+                <div style="background:white;padding:35px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;max-width:500px;">
+                    <h1 style="color:#2e7d32;margin-top:0;">✅ Lead Automation Service is Live!</h1>
+                    <p style="color:#444;font-size:16px;">WhatsApp & Airtable integration is active and listening for Meta Webhooks.</p>
+                    <p style="color:#888;font-size:14px;">WhatsApp Service: <b>Green-API (QR Connected)</b></p>
+                </div>
+            </body>
+        </html>
+        """
     return RedirectResponse(url="/qr")
 
 
@@ -57,7 +71,7 @@ async def qr_page():
             return Response(content=resp.text, media_type="text/html")
         except Exception as e:
             return Response(
-                content="<h2 style='font-family:sans-serif;text-align:center;margin-top:20%;'>WhatsApp QR Server initializing... Please refresh in 5 seconds.</h2><script>setTimeout(() => location.reload(), 3000);</script>",
+                content="<h2 style='font-family:sans-serif;text-align:center;margin-top:20%;'>WhatsApp QR Service initializing... Please refresh in a few seconds.</h2><script>setTimeout(() => location.reload(), 3000);</script>",
                 media_type="text/html",
             )
 
