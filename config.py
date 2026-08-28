@@ -9,6 +9,7 @@ class Settings:
     META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
     META_VERIFY_TOKEN = os.getenv("META_VERIFY_TOKEN")
     META_APP_SECRET = os.getenv("META_APP_SECRET")
+    ALLOWED_FORM_ID = os.getenv("ALLOWED_FORM_ID")
 
     # --- WhatsApp QR Code API (Green-API / Local) ---
     GREEN_API_INSTANCE_ID = os.getenv("GREEN_API_INSTANCE_ID")

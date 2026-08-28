@@ -115,6 +115,13 @@ async def receive_webhook(request: Request):
         for change in entry.get("changes", []):
             value = change.get("value", {})
             leadgen_id = value.get("leadgen_id")
+            form_id = value.get("form_id")
+
+            if settings.ALLOWED_FORM_ID and form_id:
+                if str(form_id).strip() != str(settings.ALLOWED_FORM_ID).strip():
+                    logger.info(f"Skipping lead {leadgen_id}: form_id {form_id} != ALLOWED_FORM_ID {settings.ALLOWED_FORM_ID}")
+                    continue
+
             if leadgen_id:
                 is_new = db.enqueue_lead(leadgen_id)
                 if is_new:
