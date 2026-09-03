@@ -43,11 +43,11 @@ async def startup_event():
     logger.info(f"Started {settings.WORKER_COUNT} workers")
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
     """Live dashboard landing page."""
     if settings.GREEN_API_INSTANCE_ID and settings.GREEN_API_TOKEN:
-        return """
+        return HTMLResponse(content="""
         <html>
             <head><title>Lead Automation Status</title></head>
             <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;margin:0;">
@@ -58,7 +58,7 @@ async def root():
                 </div>
             </body>
         </html>
-        """
+        """)
     return RedirectResponse(url="/qr")
 
 
@@ -133,10 +133,11 @@ async def receive_webhook(request: Request):
     return {"status": "ok"}
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD", "POST"])
 async def health():
     """Useful for uptime monitors (e.g. UptimeRobot) to confirm the server is alive."""
     return {"status": "healthy"}
+
 
 
 if __name__ == "__main__":
