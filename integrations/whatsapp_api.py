@@ -45,7 +45,7 @@ async def send_whatsapp_template(to_number: str, template_name: str, body_params
             logger.info(f"WhatsApp message sent to {to_number} via local QR server (100% Free)")
             return resp.json()
     except Exception as local_err:
-        logger.warning(f"Local WhatsApp server not ready or failed ({local_err}). Checking Green-API fallback...")
+        logger.warning(f"Local WhatsApp server attempt ({local_err}). Checking Green-API fallback...")
         if settings.GREEN_API_INSTANCE_ID and settings.GREEN_API_TOKEN:
             chat_id = f"{clean_phone}@c.us" if "@" not in clean_phone else clean_phone
             inst_id = str(settings.GREEN_API_INSTANCE_ID).strip()
@@ -63,6 +63,6 @@ async def send_whatsapp_template(to_number: str, template_name: str, body_params
                     return resp.json()
                 except Exception as e:
                     logger.error(f"Green-API sending failed: {e}")
-                    raise e
+                    raise local_err
         else:
             raise local_err
