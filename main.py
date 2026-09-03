@@ -57,7 +57,7 @@ async def qr_page():
             return Response(content=resp.text, media_type="text/html")
         except Exception as e:
             return Response(
-                content="<h2 style='font-family:sans-serif;text-align:center;margin-top:20%;'>WhatsApp QR Service initializing... Please refresh in a few seconds.</h2><script>setTimeout(() => location.reload(), 3000);</script>",
+                content=f"<h2 style='font-family:sans-serif;text-align:center;margin-top:20%;'>WhatsApp QR Service initializing... ({e})</h2><script>setTimeout(() => location.reload(), 3000);</script>",
                 media_type="text/html",
             )
 
