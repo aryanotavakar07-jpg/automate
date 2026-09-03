@@ -119,7 +119,7 @@ async def receive_webhook(request: Request):
     return {"status": "ok"}
 
 
-from integrations.airtable_api import create_airtable_record
+from integrations.airtable_api import create_airtable_record, lead_already_stored
 from integrations.whatsapp_api import send_whatsapp_template
 
 @app.api_route("/health", methods=["GET", "HEAD", "POST"])
@@ -129,8 +129,14 @@ async def health():
 
 
 @app.api_route("/send-manual-lead", methods=["GET", "POST"])
-async def send_manual_lead(name: str = "Valued Lead", phone: str = "", configuration: str = "N/A", campaign: str = "Lead Form"):
-    """Allows manual lead processing (Airtable + Owner WhatsApp Alert + Client WhatsApp Welcome)."""
+async def send_manual_lead(name: str = "Valued Lead", phone: str = "", configuration: str = "N/A", campaign: str = "Lead Form", force: bool = False):
+    """Allows manual lead processing (Airtable + Owner WhatsApp Alert + Client WhatsApp Welcome) with dedup protection."""
+    # Dedup check
+    if phone and not force:
+        if await lead_already_stored(phone):
+            logger.info(f"Manual lead {phone} already processed/stored in Airtable. Skipping duplicate message.")
+            return {"status": "skipped", "message": f"Lead for {phone} is already in Airtable. Message skipped to prevent duplicates."}
+
     # 1. Airtable
     await create_airtable_record({
         "Client Name": str(name),
