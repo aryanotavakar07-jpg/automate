@@ -54,7 +54,10 @@ async def root():
                 <div style="background:white;padding:35px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;max-width:500px;">
                     <h1 style="color:#2e7d32;margin-top:0;">✅ Lead Automation Service is Live!</h1>
                     <p style="color:#444;font-size:16px;">WhatsApp & Airtable integration is active and listening for Meta Webhooks.</p>
-                    <p style="color:#888;font-size:14px;">WhatsApp Service: <b>Green-API (QR Connected)</b></p>
+                    <p style="color:#888;font-size:14px;">WhatsApp Service Mode: <b>Green-API Cloud</b></p>
+                    <div style="margin-top:20px;">
+                        <a href="/qr" style="display:inline-block;padding:12px 24px;background:#25d366;color:white;text-decoration:none;border-radius:6px;font-weight:bold;">View Free WhatsApp QR Page</a>
+                    </div>
                 </div>
             </body>
         </html>
