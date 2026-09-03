@@ -119,10 +119,62 @@ async def receive_webhook(request: Request):
     return {"status": "ok"}
 
 
+from integrations.airtable_api import create_airtable_record
+from integrations.whatsapp_api import send_whatsapp_template
+
 @app.api_route("/health", methods=["GET", "HEAD", "POST"])
 async def health():
     """Useful for uptime monitors (e.g. UptimeRobot) to confirm the server is alive."""
     return {"status": "healthy"}
+
+
+@app.api_route("/send-manual-lead", methods=["GET", "POST"])
+async def send_manual_lead(name: str = "Valued Lead", phone: str = "", configuration: str = "N/A", campaign: str = "Lead Form"):
+    """Allows manual lead processing (Airtable + Owner WhatsApp Alert + Client WhatsApp Welcome)."""
+    # 1. Airtable
+    await create_airtable_record({
+        "Client Name": str(name),
+        "Phone Number": str(phone),
+        "Configuration": str(configuration),
+        "Remark": "",
+        "Campaign Name": str(campaign),
+    })
+
+    owner_status = "skipped"
+    client_status = "skipped"
+
+    # 2. Owner Alert
+    if settings.OWNER_WHATSAPP_NUMBER:
+        try:
+            answers_text = f"which_configuration_are_you_looking_for?: {configuration}"
+            await send_whatsapp_template(
+                to_number=settings.OWNER_WHATSAPP_NUMBER,
+                template_name=settings.ALERT_TEMPLATE_NAME,
+                body_params=[campaign, name, phone or "Not provided", answers_text],
+            )
+            owner_status = "sent"
+        except Exception as e:
+            owner_status = f"error: {e}"
+
+    # 3. Client Welcome Message
+    if phone:
+        try:
+            await send_whatsapp_template(
+                to_number=phone,
+                template_name=settings.CLIENT_TEMPLATE_NAME,
+                body_params=[name, campaign, configuration],
+            )
+            client_status = "sent"
+        except Exception as e:
+            client_status = f"error: {e}"
+
+    return {
+        "status": "success",
+        "client_name": name,
+        "phone": phone,
+        "owner_whatsapp_alert": owner_status,
+        "client_whatsapp_message": client_status
+    }
 
 
 
