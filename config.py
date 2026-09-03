@@ -12,8 +12,8 @@ class Settings:
     ALLOWED_FORM_ID = os.getenv("ALLOWED_FORM_ID")
 
     # --- WhatsApp QR Code API (Green-API / Local) ---
-    GREEN_API_INSTANCE_ID = os.getenv("GREEN_API_INSTANCE_ID")
-    GREEN_API_TOKEN = os.getenv("GREEN_API_TOKEN")
+    GREEN_API_INSTANCE_ID = None # Disabled expired Green-API fallback to force local connected Baileys engine
+    GREEN_API_TOKEN = None
     OWNER_WHATSAPP_NUMBER = os.getenv("OWNER_WHATSAPP_NUMBER")
 
     ALERT_TEMPLATE_NAME = os.getenv("ALERT_TEMPLATE_NAME", "lead_alert")
