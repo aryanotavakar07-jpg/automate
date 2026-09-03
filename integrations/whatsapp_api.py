@@ -38,31 +38,8 @@ async def send_whatsapp_template(to_number: str, template_name: str, body_params
 
     # Prioritize 100% Free Local Baileys WhatsApp Engine
     payload = {"to": clean_phone, "message": message_text}
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(LOCAL_WA_URL, json=payload)
-            resp.raise_for_status()
-            logger.info(f"WhatsApp message sent to {to_number} via local QR server (100% Free)")
-            return resp.json()
-    except Exception as local_err:
-        logger.warning(f"Local WhatsApp server attempt ({local_err}). Checking Green-API fallback...")
-        if settings.GREEN_API_INSTANCE_ID and settings.GREEN_API_TOKEN:
-            chat_id = f"{clean_phone}@c.us" if "@" not in clean_phone else clean_phone
-            inst_id = str(settings.GREEN_API_INSTANCE_ID).strip()
-            prefix = inst_id[:4] if len(inst_id) >= 4 else ""
-
-            primary_host = f"https://{prefix}.api.greenapi.com" if prefix else "https://api.green-api.com"
-            url = f"{primary_host}/waInstance{inst_id}/sendMessage/{settings.GREEN_API_TOKEN}"
-            green_payload = {"chatId": chat_id, "message": message_text}
-
-            async with httpx.AsyncClient(timeout=15) as client:
-                try:
-                    resp = await client.post(url, json=green_payload)
-                    resp.raise_for_status()
-                    logger.info(f"WhatsApp message sent to {to_number} via Green-API ({primary_host})")
-                    return resp.json()
-                except Exception as e:
-                    logger.error(f"Green-API sending failed: {e}")
-                    raise local_err
-        else:
-            raise local_err
+    async with httpx.AsyncClient(timeout=15) as client:
+        resp = await client.post(LOCAL_WA_URL, json=payload)
+        resp.raise_for_status()
+        logger.info(f"WhatsApp message sent to {to_number} via local QR server (100% Free)")
+        return resp.json()
