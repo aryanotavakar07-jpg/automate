@@ -3,23 +3,27 @@ const qrcode = require('qrcode-terminal');
 const QRCode = require('qrcode');
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.WA_PORT || 3000;
+const AUTH_DIR = path.join(__dirname, 'baileys_auth_info');
+
 let sock = null;
 let latestQrData = null;
 let isConnected = false;
 
 async function connectToWhatsApp() {
     try {
-        const { state, saveCreds } = await useMultiFileAuthState('baileys_auth_info');
+        const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
         
         sock = makeWASocket({
             auth: state,
-            printQRInTerminal: true
+            browser: ['Lead Automation', 'Chrome', '1.0.0']
         });
 
         sock.ev.on('creds.update', saveCreds);
@@ -29,18 +33,28 @@ async function connectToWhatsApp() {
             
             if (qr) {
                 latestQrData = qr;
-                qrcode.generate(qr, { small: true });
-                console.log('\n[WhatsApp] Scan the QR code above or open http://localhost:' + PORT + '/qr in your browser!\n');
+                try {
+                    qrcode.generate(qr, { small: true });
+                } catch (e) {}
+                console.log('\n[WhatsApp] Scan the QR code above or open /qr in your browser!\n');
             }
 
             if (connection === 'close') {
                 isConnected = false;
+                latestQrData = null;
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-                console.log('[WhatsApp] Connection closed. Reconnecting:', shouldReconnect);
-                if (shouldReconnect) {
-                    setTimeout(connectToWhatsApp, 3000);
+                const errMsg = String(lastDisconnect?.error || '');
+                console.log('[WhatsApp] Connection closed. Status code:', statusCode, 'Error:', errMsg);
+                
+                // If logged out or QR expired, clean auth folder so a fresh QR generates immediately
+                if (statusCode === DisconnectReason.loggedOut || errMsg.includes('QR refs attempts ended') || statusCode === 401) {
+                    console.log('[WhatsApp] Resetting auth session to generate fresh QR code...');
+                    try {
+                        fs.rmSync(AUTH_DIR, { recursive: true, force: true });
+                    } catch (e) {}
                 }
+                
+                setTimeout(connectToWhatsApp, 3000);
             } else if (connection === 'open') {
                 isConnected = true;
                 latestQrData = null;
@@ -51,16 +65,38 @@ async function connectToWhatsApp() {
         });
     } catch (err) {
         console.error('[WhatsApp] Initialization error:', err);
+        setTimeout(connectToWhatsApp, 5000);
     }
 }
 
 // Endpoint to view QR code in browser
 app.get('/qr', async (req, res) => {
     if (isConnected) {
-        return res.send('<h2 style="color:green;font-family:sans-serif;text-align:center;margin-top:20%;">WhatsApp is already connected and active!</h2>');
+        return res.send(`
+            <html>
+                <head><title>WhatsApp Status</title></head>
+                <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;margin:0;">
+                    <div style="background:white;padding:35px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;">
+                        <h1 style="color:#2e7d32;margin-top:0;">✅ WhatsApp is Connected!</h1>
+                        <p style="color:#444;font-size:16px;">Lead Automation is active and ready to send instant notifications.</p>
+                    </div>
+                </body>
+            </html>
+        `);
     }
     if (!latestQrData) {
-        return res.send('<h2 style="font-family:sans-serif;text-align:center;margin-top:20%;">Generating QR Code... Please refresh in a few seconds.</h2><script>setTimeout(() => location.reload(), 3000);</script>');
+        return res.send(`
+            <html>
+                <head><title>Generating WhatsApp QR</title></head>
+                <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;margin:0;">
+                    <div style="background:white;padding:35px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;">
+                        <h2 style="color:#333;margin-top:0;">⚡ Generating Fresh WhatsApp QR Code...</h2>
+                        <p style="color:#666;">Please wait a few seconds, page will auto-refresh.</p>
+                    </div>
+                    <script>setTimeout(() => location.reload(), 3000);</script>
+                </body>
+            </html>
+        `);
     }
     try {
         const qrImage = await QRCode.toDataURL(latestQrData);
@@ -69,10 +105,10 @@ app.get('/qr', async (req, res) => {
                 <head><title>WhatsApp QR Login</title></head>
                 <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;margin:0;">
                     <div style="background:white;padding:30px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;">
-                        <h2 style="color:#111;margin-top:0;">Scan with WhatsApp on 9892749953</h2>
+                        <h2 style="color:#111;margin-top:0;">Scan with WhatsApp</h2>
                         <p style="color:#666;">Open WhatsApp on phone &rarr; Settings/Menu &rarr; <b>Linked Devices</b> &rarr; <b>Link a Device</b></p>
                         <img src="${qrImage}" style="width:280px;height:280px;border:1px solid #ddd;border-radius:8px;"/>
-                        <p style="color:#888;font-size:12px;margin-bottom:0;">Auto-refreshes every 5 seconds</p>
+                        <p style="color:#888;font-size:12px;margin-top:15px;">Auto-refreshes every 5 seconds</p>
                     </div>
                     <script>setTimeout(() => location.reload(), 5000);</script>
                 </body>
@@ -85,7 +121,7 @@ app.get('/qr', async (req, res) => {
 
 // Endpoint to check status
 app.get('/status', (req, res) => {
-    res.json({ connected: isConnected });
+    res.json({ connected: isConnected, hasQr: !!latestQrData });
 });
 
 // Endpoint to send WhatsApp message
@@ -100,6 +136,9 @@ app.post('/send-message', async (req, res) => {
 
     try {
         let formattedNumber = to.replace(/[^0-9]/g, '');
+        if (formattedNumber.length === 10) {
+            formattedNumber = '91' + formattedNumber;
+        }
         if (!formattedNumber.endsWith('@s.whatsapp.net')) {
             formattedNumber = `${formattedNumber}@s.whatsapp.net`;
         }
