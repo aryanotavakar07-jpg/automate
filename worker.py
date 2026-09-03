@@ -24,72 +24,88 @@ async def process_lead(leadgen_id: str, queue: "asyncio.Queue" = None):
         except Exception as err:
             logger.warning(f"Airtable dedup check failed: {err}. Proceeding with processing...")
 
-        # Fetch lead details from Meta Graph API, with fallback for test leads
+        # Fetch lead details from Meta Graph API
+        is_test_lead = str(leadgen_id).startswith("4444") or str(leadgen_id).lower() == "test" or not settings.META_ACCESS_TOKEN
         try:
             raw = await fetch_lead_details(leadgen_id)
             parsed = parse_lead_fields(raw)
             logger.info(f"Successfully fetched lead details for {leadgen_id} from Meta API")
         except Exception as meta_err:
-            logger.warning(f"Could not fetch full lead details from Meta API ({meta_err}). Using test fallback data.")
-            parsed = {
-                "campaign_name": "Meta Ads Test Campaign",
-                "ad_name": "Test Ad",
-                "form_name": "Test Lead Form",
-                "created_time": datetime.now(timezone.utc).isoformat(),
-                "full_name": "Test Lead User",
-                "phone_number": settings.OWNER_WHATSAPP_NUMBER,
-                "answers": {"Note": f"Test lead generated from Meta Tool (ID: {leadgen_id})"},
-            }
+            if is_test_lead:
+                logger.warning(f"Could not fetch lead details for test lead {leadgen_id}: {meta_err}. Using test fallback data.")
+                parsed = {
+                    "campaign_name": "Meta Ads Test Campaign",
+                    "ad_name": "Test Ad",
+                    "form_name": "Test Lead Form",
+                    "created_time": datetime.now(timezone.utc).isoformat(),
+                    "full_name": "Test Customer",
+                    "phone_number": None,
+                    "answers": {"Note": f"Test lead generated from Meta Tool (ID: {leadgen_id})"},
+                }
+            else:
+                logger.error(f"CRITICAL: Failed to fetch lead details from Meta API for lead {leadgen_id}: {meta_err}")
+                raise RuntimeError(f"Meta Graph API error for lead {leadgen_id}: {meta_err}") from meta_err
 
-        phone = parsed["phone_number"] or settings.OWNER_WHATSAPP_NUMBER
-        name = parsed["full_name"] or "Test Customer"
-        campaign = parsed["campaign_name"] or "Test Campaign"
-        answers_text = "\n".join(f"{k}: {v}" for k, v in parsed["answers"].items()) or "N/A"
+        client_phone = parsed.get("phone_number")
+        name = parsed.get("full_name") or "Valued Lead"
+        campaign = parsed.get("campaign_name") or "Lead Form"
+        answers_text = "\n".join(f"{k}: {v}" for k, v in parsed.get("answers", {}).items()) or "N/A"
 
-        # 1. Alert to you, the business owner
-        try:
-            await send_whatsapp_template(
-                to_number=settings.OWNER_WHATSAPP_NUMBER,
-                template_name=settings.ALERT_TEMPLATE_NAME,
-                body_params=[campaign, name, phone, answers_text],
-            )
-            logger.info("WhatsApp alert sent to owner successfully")
-        except Exception as wa_err:
-            logger.error(f"Failed to send owner WhatsApp alert: {wa_err}")
-
-        # 2. Automated message to the client
-        if phone:
+        # 1. Alert to the business owner
+        if settings.OWNER_WHATSAPP_NUMBER:
             try:
-                config_val = parsed.get("configuration") or ""
+                display_phone = client_phone or "Not provided"
                 await send_whatsapp_template(
-                    to_number=phone,
-                    template_name=settings.CLIENT_TEMPLATE_NAME,
-                    body_params=[name, campaign, config_val],
+                    to_number=settings.OWNER_WHATSAPP_NUMBER,
+                    template_name=settings.ALERT_TEMPLATE_NAME,
+                    body_params=[campaign, name, display_phone, answers_text],
                 )
-                logger.info("WhatsApp welcome message sent to client successfully")
-            except Exception as client_wa_err:
-                logger.error(f"Failed to send client WhatsApp message: {client_wa_err}")
+                logger.info("WhatsApp alert sent to owner successfully")
+            except Exception as wa_err:
+                logger.error(f"Failed to send owner WhatsApp alert: {wa_err}")
 
-        # 3. Store everything in Airtable
+        # 2. Automated message to the client (ONLY send to actual client, never owner)
+        if client_phone:
+            owner_clean = settings.OWNER_WHATSAPP_NUMBER.replace("+", "").replace(" ", "").strip() if settings.OWNER_WHATSAPP_NUMBER else ""
+            client_clean = client_phone.replace("+", "").replace(" ", "").strip()
+            
+            if owner_clean and client_clean == owner_clean:
+                logger.info("Client phone equals owner phone (test lead) - skipping client welcome message")
+            else:
+                try:
+                    config_val = parsed.get("configuration") or ""
+                    await send_whatsapp_template(
+                        to_number=client_phone,
+                        template_name=settings.CLIENT_TEMPLATE_NAME,
+                        body_params=[name, campaign, config_val],
+                    )
+                    logger.info(f"WhatsApp welcome message sent to client ({client_phone}) successfully")
+                except Exception as client_wa_err:
+                    logger.error(f"Failed to send client WhatsApp message to {client_phone}: {client_wa_err}")
+        else:
+            logger.warning(f"No valid phone number found for lead {leadgen_id} - skipping client WhatsApp welcome message")
+
+        # 3. Store in Airtable (Campaign Name, Client Name, Phone Number, Form Answers [only answer given], Remark)
+        answers_only = ", ".join(str(v) for v in parsed.get("answers", {}).values() if v) or parsed.get("configuration") or "N/A"
         try:
             await create_airtable_record(
                 {
                     "Lead ID": str(leadgen_id),
                     "Campaign Name": str(campaign),
-                    "Ad Name": str(parsed.get("ad_name", "N/A")),
-                    "Form Name": str(parsed.get("form_name", "N/A")),
                     "Client Name": str(name),
-                    "Phone Number": str(phone or ""),
-                    "Form Answers": str(answers_text),
-                    "Created Time": str(parsed.get("created_time", "")),
+                    "Phone Number": str(client_phone or ""),
+                    "Form Answers": str(answers_only),
+                    "Remark": "",
                 }
             )
             logger.info("Lead saved to Airtable successfully")
         except Exception as airtable_err:
             logger.error(f"Failed to save lead to Airtable: {airtable_err}")
 
+
         db.mark_status(leadgen_id, "done")
         logger.info(f"Lead {leadgen_id} processed successfully")
+
 
     except Exception as e:
         logger.exception(f"Failed to process lead {leadgen_id}: {e}")

@@ -10,7 +10,7 @@ async def fetch_lead_details(leadgen_id: str) -> dict:
     url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{leadgen_id}"
     params = {
         "access_token": settings.META_ACCESS_TOKEN,
-        "fields": "field_data,campaign_name,ad_name,form_name,created_time,platform",
+        "fields": "field_data,campaign_name,ad_name,form_id,created_time,platform",
     }
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(url, params=params)
@@ -31,22 +31,48 @@ def parse_lead_fields(lead_data: dict) -> dict:
         "answers": {},
     }
 
+    first_name = ""
+    last_name = ""
+
     for field in lead_data.get("field_data", []):
         name = field.get("name", "")
         values = field.get("values", [])
         value = values[0] if values else ""
-        key = name.lower().replace(" ", "_")
+        if not value:
+            continue
 
-        if key in ("full_name", "name"):
-            parsed["full_name"] = value
-        elif key in ("phone_number", "phone"):
-            parsed["phone_number"] = value
+        key = name.lower().replace(" ", "_").replace("-", "_")
+
+        if key in ("full_name", "name", "user_name"):
+            parsed["full_name"] = str(value).strip()
+        elif key in ("first_name", "given_name"):
+            first_name = str(value).strip()
+        elif key in ("last_name", "family_name", "surname"):
+            last_name = str(value).strip()
+        elif key in ("phone_number", "phone", "mobile_number", "mobile", "contact_number", "contact", "whatsapp_number", "whatsapp", "phone_no", "cell_phone"):
+            parsed["phone_number"] = str(value).strip()
         else:
-            parsed["answers"][name] = value
+            parsed["answers"][name] = str(value).strip()
             # Check if this question is about configuration or BHK selection
             if any(t in key for t in ("config", "bhk", "type", "flat", "room", "size", "requirement", "option", "unit")):
-                parsed["configuration"] = value
+                parsed["configuration"] = str(value).strip()
             elif "bhk" in str(value).lower():
-                parsed["configuration"] = value
+                parsed["configuration"] = str(value).strip()
+
+    # If full_name wasn't explicitly set, assemble from first_name and last_name
+    if not parsed["full_name"] and (first_name or last_name):
+        parsed["full_name"] = f"{first_name} {last_name}".strip()
+
+    # Clean phone number format
+    if parsed["phone_number"]:
+        raw_phone = parsed["phone_number"]
+        digits = "".join(c for c in raw_phone if c.isdigit())
+        if raw_phone.startswith("+"):
+            parsed["phone_number"] = "+" + digits
+        elif len(digits) == 10:
+            parsed["phone_number"] = "+91" + digits
+        else:
+            parsed["phone_number"] = "+" + digits
 
     return parsed
+
