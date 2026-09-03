@@ -5,12 +5,14 @@ from config import settings
 logger = logging.getLogger("airtable_api")
 
 
-async def lead_already_stored(lead_id: str) -> bool:
-    """Checks Airtable for Lead ID dedup. If Airtable API fails or hits rate limits,
+async def lead_already_stored(identifier: str) -> bool:
+    """Checks Airtable for Phone Number or Client Name dedup. If Airtable API fails or hits rate limits,
     it returns False gracefully so WhatsApp messages are never blocked."""
+    if not identifier:
+        return False
     url = f"https://api.airtable.com/v0/{settings.AIRTABLE_BASE_ID}/{settings.AIRTABLE_TABLE_NAME}"
     headers = {"Authorization": f"Bearer {settings.AIRTABLE_API_KEY}"}
-    params = {"filterByFormula": f"{{Lead ID}}='{lead_id}'", "maxRecords": 1}
+    params = {"filterByFormula": f"OR({{Phone Number}}='{identifier}', {{Client Name}}='{identifier}')", "maxRecords": 1}
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(url, headers=headers, params=params)
@@ -35,24 +37,41 @@ async def create_airtable_record(fields: dict):
         "Content-Type": "application/json",
     }
 
+    current_fields = dict(fields)
+    max_attempts = 4
+
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.post(url, headers=headers, json={"fields": fields})
-            if resp.status_code in (200, 201):
-                logger.info(f"Successfully created Airtable record for Lead ID: {fields.get('Lead ID')}")
-                return resp.json()
-            elif resp.status_code == 422 and "UNKNOWN_FIELD_NAME" in resp.text:
-                # If Remark column doesn't exist in user's Airtable yet, strip Remark and retry
-                if "Remark" in fields or "Remarks" in fields:
-                    fields_copy = {k: v for k, v in fields.items() if k not in ("Remark", "Remarks")}
-                    resp_retry = await client.post(url, headers=headers, json={"fields": fields_copy})
-                    if resp_retry.status_code in (200, 201):
-                        logger.info(f"Created Airtable record (without Remark column) for Lead ID: {fields.get('Lead ID')}")
-                        return resp_retry.json()
-                logger.error(f"Airtable record creation failed (HTTP 422): {resp.text}")
-                logger.error("HINT: Please add a column named 'Remark' or 'Form Answers' in your Airtable base if missing.")
-                return None
-            else:
+            for attempt in range(max_attempts):
+                resp = await client.post(url, headers=headers, json={"fields": current_fields})
+                if resp.status_code in (200, 201):
+                    logger.info(f"Successfully created Airtable record for Client Name: {current_fields.get('Client Name')}")
+                    return resp.json()
+                elif resp.status_code == 422 and "UNKNOWN_FIELD_NAME" in resp.text:
+                    # Parse unknown field name from error response if possible
+                    import re
+                    match = re.search(r'Unknown field name:\s*"([^"]+)"', resp.text)
+                    if match:
+                        bad_field = match.group(1)
+                        if bad_field in current_fields:
+                            logger.warning(f"Airtable table missing column '{bad_field}'. Removing and retrying...")
+                            current_fields.pop(bad_field)
+                            continue
+                    
+                    # Fallback stripping of optional columns
+                    if "Remark" in current_fields:
+                        current_fields.pop("Remark")
+                        continue
+                    elif "Remarks" in current_fields:
+                        current_fields.pop("Remarks")
+                        continue
+                    elif "Campaign Name" in current_fields:
+                        current_fields.pop("Campaign Name")
+                        continue
+                    elif "Configuration" in current_fields:
+                        current_fields.pop("Configuration")
+                        continue
+                
                 logger.error(f"Airtable record creation failed (HTTP {resp.status_code}): {resp.text}")
                 return None
     except Exception as e:

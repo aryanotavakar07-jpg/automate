@@ -44,9 +44,13 @@ Hi {{1}}, thanks for your interest in {{2}}! We'll be in touch shortly.
 Submit both for approval (usually approved within minutes to a few hours).
 
 ### Airtable base
-Create a base with a table (default name `Leads`) with these columns:
-`Lead ID`, `Campaign Name`, `Ad Name`, `Form Name`, `Client Name`, `Phone Number`,
-`Form Answers`, `Created Time` — all as "Single line text" or "Long text".
+Create a base with a table (default name `Leads`) with these 5 exact columns in order:
+1. `Client Name` (Primary Column)
+2. `Phone Number`
+3. `Configuration`
+4. `Remark`
+5. `Campaign Name`
+(All formatted as "Single line text" or "Long text").
 
 ---
 

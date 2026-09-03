@@ -48,16 +48,14 @@ async def main():
             logger.info(f"Fetched Meta Data -> Name: {name} | Phone: {client_phone} | Campaign: {campaign}")
 
             # 1. Store real data in Airtable
+            config_val = parsed.get("configuration") or ", ".join(str(v) for v in parsed.get("answers", {}).values() if v) or "N/A"
             try:
                 rec = await create_airtable_record({
-                    "Lead ID": str(leadgen_id),
-                    "Campaign Name": str(campaign),
-                    "Ad Name": str(parsed.get("ad_name", "N/A")),
-                    "Form Name": str(parsed.get("form_name", "N/A")),
                     "Client Name": str(name),
                     "Phone Number": str(client_phone or ""),
-                    "Form Answers": str(answers_text),
-                    "Created Time": str(parsed.get("created_time", created_at)),
+                    "Configuration": str(config_val),
+                    "Remark": "",
+                    "Campaign Name": str(campaign),
                 })
                 if rec:
                     logger.info("✓ Lead saved to Airtable successfully")

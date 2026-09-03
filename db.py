@@ -8,7 +8,7 @@ _lock = threading.Lock()
 
 def init_db():
     with _lock:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS leads (
@@ -28,7 +28,7 @@ def enqueue_lead(leadgen_id: str) -> bool:
     """Insert a new lead record. Returns False if it already exists (dedup),
     so the same lead is never processed / messaged twice."""
     with _lock:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         try:
             conn.execute(
                 "INSERT INTO leads (leadgen_id, status, created_at) VALUES (?, 'pending', ?)",
@@ -44,7 +44,7 @@ def enqueue_lead(leadgen_id: str) -> bool:
 
 def mark_status(leadgen_id: str, status: str, error: str = None):
     with _lock:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         conn.execute(
             "UPDATE leads SET status = ?, error = ? WHERE leadgen_id = ?",
             (status, error, leadgen_id),
@@ -55,7 +55,7 @@ def mark_status(leadgen_id: str, status: str, error: str = None):
 
 def increment_retry(leadgen_id: str) -> int:
     with _lock:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         conn.execute(
             "UPDATE leads SET retry_count = retry_count + 1 WHERE leadgen_id = ?",
             (leadgen_id,),
@@ -72,7 +72,7 @@ def get_unfinished_leads(max_retries: int):
     """Leads that never finished successfully — used on startup to recover
     from a crash or restart without losing anything."""
     with _lock:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         rows = conn.execute(
             "SELECT leadgen_id FROM leads WHERE status != 'done' AND retry_count < ?",
             (max_retries,),

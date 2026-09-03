@@ -25,7 +25,7 @@ async def process_lead(leadgen_id: str, queue: "asyncio.Queue" = None):
             logger.warning(f"Airtable dedup check failed: {err}. Proceeding with processing...")
 
         # Fetch lead details from Meta Graph API
-        is_test_lead = str(leadgen_id).startswith("4444") or str(leadgen_id).lower() == "test" or not settings.META_ACCESS_TOKEN
+        is_test_lead = str(leadgen_id).startswith("4444") or "test" in str(leadgen_id).lower() or not settings.META_ACCESS_TOKEN
         try:
             raw = await fetch_lead_details(leadgen_id)
             parsed = parse_lead_fields(raw)
@@ -39,7 +39,7 @@ async def process_lead(leadgen_id: str, queue: "asyncio.Queue" = None):
                     "form_name": "Test Lead Form",
                     "created_time": datetime.now(timezone.utc).isoformat(),
                     "full_name": "Test Customer",
-                    "phone_number": None,
+                    "phone_number": settings.OWNER_WHATSAPP_NUMBER or None,
                     "answers": {"Note": f"Test lead generated from Meta Tool (ID: {leadgen_id})"},
                 }
             else:
@@ -64,65 +64,67 @@ async def process_lead(leadgen_id: str, queue: "asyncio.Queue" = None):
             except Exception as wa_err:
                 logger.error(f"Failed to send owner WhatsApp alert: {wa_err}")
 
-        # 2. Automated message to the client (ONLY send to actual client, never owner)
+        # 2. Automated message to the client
         if client_phone:
-            owner_clean = settings.OWNER_WHATSAPP_NUMBER.replace("+", "").replace(" ", "").strip() if settings.OWNER_WHATSAPP_NUMBER else ""
-            client_clean = client_phone.replace("+", "").replace(" ", "").strip()
-            
-            if owner_clean and client_clean == owner_clean:
-                logger.info("Client phone equals owner phone (test lead) - skipping client welcome message")
-            else:
-                try:
-                    config_val = parsed.get("configuration") or ""
-                    await send_whatsapp_template(
-                        to_number=client_phone,
-                        template_name=settings.CLIENT_TEMPLATE_NAME,
-                        body_params=[name, campaign, config_val],
-                    )
-                    logger.info(f"WhatsApp welcome message sent to client ({client_phone}) successfully")
-                except Exception as client_wa_err:
-                    logger.error(f"Failed to send client WhatsApp message to {client_phone}: {client_wa_err}")
+            try:
+                config_val = parsed.get("configuration") or ""
+                await send_whatsapp_template(
+                    to_number=client_phone,
+                    template_name=settings.CLIENT_TEMPLATE_NAME,
+                    body_params=[name, campaign, config_val],
+                )
+                logger.info(f"WhatsApp welcome message sent to client ({client_phone}) successfully")
+            except Exception as client_wa_err:
+                logger.error(f"Failed to send client WhatsApp message to {client_phone}: {client_wa_err}")
         else:
             logger.warning(f"No valid phone number found for lead {leadgen_id} - skipping client WhatsApp welcome message")
 
-        # 3. Store in Airtable (Campaign Name, Client Name, Phone Number, Form Answers [only answer given], Remark)
-        answers_only = ", ".join(str(v) for v in parsed.get("answers", {}).values() if v) or parsed.get("configuration") or "N/A"
+        # 3. Store in Airtable (Client Name, Phone Number, Configuration, Remark, Campaign Name)
+        config_val = parsed.get("configuration") or ", ".join(str(v) for v in parsed.get("answers", {}).values() if v) or "N/A"
         try:
-            await create_airtable_record(
+            airtable_res = await create_airtable_record(
                 {
-                    "Lead ID": str(leadgen_id),
-                    "Campaign Name": str(campaign),
                     "Client Name": str(name),
                     "Phone Number": str(client_phone or ""),
-                    "Form Answers": str(answers_only),
+                    "Configuration": str(config_val),
                     "Remark": "",
+                    "Campaign Name": str(campaign),
                 }
             )
-            logger.info("Lead saved to Airtable successfully")
+            if airtable_res:
+                logger.info(f"Lead {name} saved to Airtable successfully")
+            else:
+                logger.warning(f"Airtable record creation returned None for lead {name}")
         except Exception as airtable_err:
             logger.error(f"Failed to save lead to Airtable: {airtable_err}")
-
 
         db.mark_status(leadgen_id, "done")
         logger.info(f"Lead {leadgen_id} processed successfully")
 
-
     except Exception as e:
         logger.exception(f"Failed to process lead {leadgen_id}: {e}")
-        retries = db.increment_retry(leadgen_id)
-        db.mark_status(leadgen_id, "failed", error=str(e))
+        try:
+            retries = db.increment_retry(leadgen_id)
+            db.mark_status(leadgen_id, "failed", error=str(e))
 
-        if retries < settings.MAX_RETRIES and queue is not None:
-            delay = min(60, 2 ** retries)
-            logger.info(f"Retrying lead {leadgen_id} in {delay}s (attempt {retries})")
-            await asyncio.sleep(delay)
-            await queue.put(leadgen_id)
+            if retries < settings.MAX_RETRIES and queue is not None:
+                delay = min(60, 2 ** retries)
+                logger.info(f"Retrying lead {leadgen_id} in {delay}s (attempt {retries})")
+                await asyncio.sleep(delay)
+                await queue.put(leadgen_id)
+        except Exception as db_err:
+            logger.error(f"Error updating retry DB status for lead {leadgen_id}: {db_err}")
 
 
 async def worker_loop(queue: "asyncio.Queue", worker_id: int):
     logger.info(f"Worker {worker_id} started")
     while True:
-        leadgen_id = await queue.get()
-        logger.info(f"Worker {worker_id} picked up lead {leadgen_id}")
-        await process_lead(leadgen_id, queue)
-        queue.task_done()
+        try:
+            leadgen_id = await queue.get()
+            logger.info(f"Worker {worker_id} picked up lead {leadgen_id}")
+            await process_lead(leadgen_id, queue)
+            queue.task_done()
+        except Exception as err:
+            logger.error(f"Worker {worker_id} encountered top-level loop error: {err}", exc_info=True)
+            await asyncio.sleep(2)
+

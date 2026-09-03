@@ -43,13 +43,13 @@ def parse_lead_fields(lead_data: dict) -> dict:
 
         key = name.lower().replace(" ", "_").replace("-", "_")
 
-        if key in ("full_name", "name", "user_name"):
+        if key in ("full_name", "name", "user_name") or "full_name" in key or "your_name" in key:
             parsed["full_name"] = str(value).strip()
-        elif key in ("first_name", "given_name"):
+        elif key in ("first_name", "given_name") or "first_name" in key:
             first_name = str(value).strip()
-        elif key in ("last_name", "family_name", "surname"):
+        elif key in ("last_name", "family_name", "surname") or "last_name" in key:
             last_name = str(value).strip()
-        elif key in ("phone_number", "phone", "mobile_number", "mobile", "contact_number", "contact", "whatsapp_number", "whatsapp", "phone_no", "cell_phone"):
+        elif any(p in key for p in ("phone", "mobile", "contact", "whatsapp", "cell", "number")):
             parsed["phone_number"] = str(value).strip()
         else:
             parsed["answers"][name] = str(value).strip()

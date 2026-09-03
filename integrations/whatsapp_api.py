@@ -36,13 +36,12 @@ async def send_whatsapp_template(to_number: str, template_name: str, body_params
 
     clean_phone = to_number.replace("+", "").replace(" ", "").strip()
 
-    # If Green-API is configured, use Green-API cloud QR service (best for Render)
+    # If Green-API is configured, use Green-API cloud QR service
     if settings.GREEN_API_INSTANCE_ID and settings.GREEN_API_TOKEN:
         chat_id = f"{clean_phone}@c.us" if "@" not in clean_phone else clean_phone
         inst_id = str(settings.GREEN_API_INSTANCE_ID).strip()
         prefix = inst_id[:4] if len(inst_id) >= 4 else ""
 
-        # Instance specific host (e.g. https://7107.api.greenapi.com)
         primary_host = f"https://{prefix}.api.greenapi.com" if prefix else "https://api.green-api.com"
         url = f"{primary_host}/waInstance{inst_id}/sendMessage/{settings.GREEN_API_TOKEN}"
         payload = {"chatId": chat_id, "message": message_text}
@@ -50,16 +49,51 @@ async def send_whatsapp_template(to_number: str, template_name: str, body_params
         async with httpx.AsyncClient(timeout=15) as client:
             try:
                 resp = await client.post(url, json=payload)
+                if resp.status_code == 466:
+                    logger.error(
+                        f"Green-API Quota Exceeded (HTTP 466) for {to_number}! "
+                        "Developer/Free plan limit reached. Upgrade at https://console.green-api.com"
+                    )
+                    # Attempt fallback to local WhatsApp node service if active
+                    try:
+                        local_resp = await client.post(LOCAL_WA_URL, json={"to": clean_phone, "message": message_text}, timeout=5)
+                        local_resp.raise_for_status()
+                        logger.info(f"WhatsApp message sent to {to_number} via local QR server fallback")
+                        return local_resp.json()
+                    except Exception:
+                        pass
                 resp.raise_for_status()
                 logger.info(f"WhatsApp message sent to {to_number} via Green-API ({primary_host})")
                 return resp.json()
             except Exception as e:
-                logger.warning(f"Primary host {primary_host} failed ({e}), trying fallback host...")
-                fallback_url = f"https://api.green-api.com/waInstance{inst_id}/sendMessage/{settings.GREEN_API_TOKEN}"
-                resp = await client.post(fallback_url, json=payload)
-                resp.raise_for_status()
-                logger.info(f"WhatsApp message sent to {to_number} via Green-API fallback host")
-                return resp.json()
+                logger.warning(f"Primary Green-API host {primary_host} failed ({e}), trying fallback host...")
+                try:
+                    fallback_url = f"https://api.green-api.com/waInstance{inst_id}/sendMessage/{settings.GREEN_API_TOKEN}"
+                    resp = await client.post(fallback_url, json=payload)
+                    if resp.status_code == 466:
+                        logger.error(
+                            f"Green-API Quota Exceeded (HTTP 466) for {to_number}! "
+                            "Upgrade plan at https://console.green-api.com"
+                        )
+                        try:
+                            local_resp = await client.post(LOCAL_WA_URL, json={"to": clean_phone, "message": message_text}, timeout=5)
+                            local_resp.raise_for_status()
+                            logger.info(f"WhatsApp message sent to {to_number} via local QR server fallback")
+                            return local_resp.json()
+                        except Exception:
+                            pass
+                    resp.raise_for_status()
+                    logger.info(f"WhatsApp message sent to {to_number} via Green-API fallback host")
+                    return resp.json()
+                except Exception as fallback_err:
+                    # Final attempt via local server
+                    try:
+                        local_resp = await client.post(LOCAL_WA_URL, json={"to": clean_phone, "message": message_text}, timeout=5)
+                        local_resp.raise_for_status()
+                        logger.info(f"WhatsApp message sent to {to_number} via local QR server fallback")
+                        return local_resp.json()
+                    except Exception:
+                        raise fallback_err
     else:
         # Fallback to local server
         payload = {"to": clean_phone, "message": message_text}
