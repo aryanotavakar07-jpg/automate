@@ -38,6 +38,9 @@ async def add_lead_by_id(leadgen_id: str):
         logger.error(f"Error fetching/saving lead {leadgen_id}: {e}")
         return None
 
+from config import settings
+from integrations.whatsapp_api import send_whatsapp_template
+
 async def add_manual_lead(name: str, phone: str, configuration: str = "N/A", campaign: str = "Lead Form"):
     rec = await create_airtable_record({
         "Client Name": str(name),
@@ -48,7 +51,33 @@ async def add_manual_lead(name: str, phone: str, configuration: str = "N/A", cam
     })
     if rec:
         logger.info(f"Successfully added manual record for {name} ({phone}) to Airtable!")
-        return rec
+
+    # 1. Owner Alert
+    if settings.OWNER_WHATSAPP_NUMBER:
+        try:
+            answers_text = f"which_configuration_are_you_looking_for?: {configuration}"
+            await send_whatsapp_template(
+                to_number=settings.OWNER_WHATSAPP_NUMBER,
+                template_name=settings.ALERT_TEMPLATE_NAME,
+                body_params=[campaign, name, phone or "Not provided", answers_text],
+            )
+            logger.info("WhatsApp alert sent to owner successfully")
+        except Exception as wa_err:
+            logger.error(f"Failed to send owner WhatsApp alert: {wa_err}")
+
+    # 2. Client Welcome
+    if phone:
+        try:
+            await send_whatsapp_template(
+                to_number=phone,
+                template_name=settings.CLIENT_TEMPLATE_NAME,
+                body_params=[name, campaign, configuration],
+            )
+            logger.info(f"WhatsApp welcome message sent to client ({phone}) successfully")
+        except Exception as client_wa_err:
+            logger.error(f"Failed to send client WhatsApp message: {client_wa_err}")
+
+    return rec
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
