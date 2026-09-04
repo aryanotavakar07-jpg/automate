@@ -14,7 +14,18 @@ async def fetch_lead_details(leadgen_id: str) -> dict:
     }
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(url, params=params)
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            try:
+                err_body = resp.json().get("error", {})
+                err_msg = err_body.get("message") or resp.text
+                err_code = err_body.get("code") or resp.status_code
+                err_subcode = err_body.get("error_subcode", "")
+                subcode_str = f" (subcode {err_subcode})" if err_subcode else ""
+                raise RuntimeError(f"Meta Graph API Error (Code {err_code}{subcode_str}): {err_msg}")
+            except Exception as parse_err:
+                if isinstance(parse_err, RuntimeError):
+                    raise parse_err
+                resp.raise_for_status()
         return resp.json()
 
 
