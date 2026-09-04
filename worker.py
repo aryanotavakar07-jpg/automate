@@ -43,8 +43,16 @@ async def process_lead(leadgen_id: str, queue: "asyncio.Queue" = None):
                     "answers": {"Note": f"Test lead generated from Meta Tool (ID: {leadgen_id})"},
                 }
             else:
-                logger.error(f"CRITICAL: Failed to fetch lead details from Meta API for lead {leadgen_id}: {meta_err}")
-                raise RuntimeError(f"Meta Graph API error for lead {leadgen_id}: {meta_err}") from meta_err
+                logger.error(f"Failed to fetch lead details from Meta API for lead {leadgen_id}: {meta_err}")
+                parsed = {
+                    "campaign_name": "Meta Lead Form (API Error)",
+                    "ad_name": "Unknown",
+                    "form_name": "Unknown",
+                    "created_time": datetime.now(timezone.utc).isoformat(),
+                    "full_name": f"Lead {leadgen_id}",
+                    "phone_number": None,
+                    "answers": {"Note": f"Meta API error for Lead ID {leadgen_id}: {meta_err}"},
+                }
 
         client_phone = parsed.get("phone_number")
         name = parsed.get("full_name") or "Valued Lead"

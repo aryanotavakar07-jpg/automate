@@ -34,12 +34,17 @@ async def send_whatsapp_template(to_number: str, template_name: str, body_params
     else:
         message_text = "\n".join(body_params)
 
-    clean_phone = to_number.replace("+", "").replace(" ", "").strip()
+    import re
+    clean_phone = re.sub(r"\D", "", to_number)
 
     # Prioritize 100% Free Local Baileys WhatsApp Engine
     payload = {"to": clean_phone, "message": message_text}
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(LOCAL_WA_URL, json=payload)
-        resp.raise_for_status()
-        logger.info(f"WhatsApp message sent to {to_number} via local QR server (100% Free)")
-        return resp.json()
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(LOCAL_WA_URL, json=payload)
+            resp.raise_for_status()
+            logger.info(f"WhatsApp message sent to {to_number} via local QR server")
+            return resp.json()
+    except Exception as err:
+        logger.warning(f"WhatsApp message to {to_number} skipped/failed: {err}")
+        return {"status": "skipped", "error": str(err)}

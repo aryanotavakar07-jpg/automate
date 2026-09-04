@@ -24,12 +24,23 @@ lead_queue: asyncio.Queue = asyncio.Queue()
 async def startup_event():
     db.init_db()
 
-    # Always start local Node WhatsApp QR Server (Baileys) so free QR service is always active
+    # Check if local Node WhatsApp QR Server (Baileys) is already running on port 3000
+    wa_running = False
     try:
-        subprocess.Popen(["node", "whatsapp_server.js"])
-        logger.info("Started Node WhatsApp QR Server subprocess (Baileys Engine)")
-    except Exception as err:
-        logger.warning(f"Local whatsapp_server.js not launched: {err}")
+        async with httpx.AsyncClient(timeout=2) as client:
+            resp = await client.get("http://localhost:3000/status")
+            if resp.status_code == 200:
+                wa_running = True
+                logger.info("Local Node WhatsApp QR Server is already active on port 3000")
+    except Exception:
+        pass
+
+    if not wa_running:
+        try:
+            subprocess.Popen(["node", "whatsapp_server.js"])
+            logger.info("Started Node WhatsApp QR Server subprocess (Baileys Engine)")
+        except Exception as err:
+            logger.warning(f"Local whatsapp_server.js not launched: {err}")
 
     # Recover anything that didn't finish before a restart/crash
     for leadgen_id in db.get_unfinished_leads(settings.MAX_RETRIES):
@@ -91,32 +102,39 @@ async def receive_webhook(request: Request):
     """This fires every time someone submits a lead form. It must respond fast,
     so it just queues the lead ID and returns immediately - the actual work
     (WhatsApp messages, Airtable) happens in the background workers."""
-    body = await request.body()
-    signature = request.headers.get("X-Hub-Signature-256", "")
-    if not verify_signature(body, signature):
-        raise HTTPException(status_code=403, detail="Invalid signature")
+    try:
+        body = await request.body()
+        signature = request.headers.get("X-Hub-Signature-256", "")
+        if not verify_signature(body, signature):
+            raise HTTPException(status_code=403, detail="Invalid signature")
 
-    payload = await request.json()
-    for entry in payload.get("entry", []):
-        for change in entry.get("changes", []):
-            value = change.get("value", {})
-            leadgen_id = value.get("leadgen_id")
-            form_id = value.get("form_id")
+        payload = await request.json()
+        logger.info(f"Webhook payload received: {payload}")
+        for entry in payload.get("entry", []):
+            for change in entry.get("changes", []):
+                value = change.get("value", {})
+                leadgen_id = value.get("leadgen_id")
+                form_id = value.get("form_id")
 
-            if settings.ALLOWED_FORM_ID and form_id:
-                if str(form_id).strip() != str(settings.ALLOWED_FORM_ID).strip():
-                    logger.info(f"Skipping lead {leadgen_id}: form_id {form_id} != ALLOWED_FORM_ID {settings.ALLOWED_FORM_ID}")
-                    continue
+                if settings.ALLOWED_FORM_ID and form_id:
+                    if str(form_id).strip() != str(settings.ALLOWED_FORM_ID).strip():
+                        logger.info(f"Skipping lead {leadgen_id}: form_id {form_id} != ALLOWED_FORM_ID {settings.ALLOWED_FORM_ID}")
+                        continue
 
-            if leadgen_id:
-                is_new = db.enqueue_lead(leadgen_id)
-                if is_new:
-                    await lead_queue.put(leadgen_id)
-                    logger.info(f"Queued new lead {leadgen_id}")
-                else:
-                    logger.info(f"Duplicate webhook for lead {leadgen_id} ignored")
+                if leadgen_id:
+                    is_new = db.enqueue_lead(str(leadgen_id))
+                    if is_new:
+                        await lead_queue.put(str(leadgen_id))
+                        logger.info(f"Queued new lead {leadgen_id}")
+                    else:
+                        logger.info(f"Duplicate webhook for lead {leadgen_id} ignored")
 
-    return {"status": "ok"}
+        return {"status": "ok"}
+    except HTTPException:
+        raise
+    except Exception as err:
+        logger.error(f"Error handling webhook payload: {err}", exc_info=True)
+        return {"status": "ok", "error": str(err)}
 
 
 from integrations.airtable_api import create_airtable_record, lead_already_stored

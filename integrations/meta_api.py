@@ -65,12 +65,16 @@ def parse_lead_fields(lead_data: dict) -> dict:
 
     # Clean phone number format
     if parsed["phone_number"]:
-        raw_phone = parsed["phone_number"]
+        raw_phone = str(parsed["phone_number"]).strip()
         digits = "".join(c for c in raw_phone if c.isdigit())
-        if raw_phone.startswith("+"):
-            parsed["phone_number"] = "+" + digits
-        elif len(digits) == 10:
+        if digits.startswith("0") and len(digits) == 11:
+            digits = digits[1:]
+        if len(digits) == 10:
             parsed["phone_number"] = "+91" + digits
+        elif len(digits) == 12 and digits.startswith("91"):
+            parsed["phone_number"] = "+" + digits
+        elif raw_phone.startswith("+"):
+            parsed["phone_number"] = "+" + digits
         else:
             parsed["phone_number"] = "+" + digits
 
