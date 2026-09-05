@@ -4,6 +4,6 @@
     "owner_whatsapp_number": "917738382905",
     "airtable_base_id": "appnn2bLWJJFH4ceD",
     "airtable_table_name": "tblginmsgXxiJ3K19",
-    "client_welcome_message": "Hello {name}! 👋\n\nThank you for your interest in *Silver 26 August*. We have received your enquiry for a *{configuration} property at GOREGAON EAST near OBEROI MALL*.\n\nWould you like us to share the *official E-Brochure & Floor Plans*, or would you prefer to *schedule a Site Visit*?"
+    "client_welcome_message": "Hello {name}! 👋\n\nThank you for your interest. We have received your enquiry for a *{configuration} property at GOREGAON EAST near OBEROI MALL*.\n\nWould you like us to share the *official E-Brochure & Floor Plans*, or would you prefer to *schedule a Site Visit*?"
   }
 }
