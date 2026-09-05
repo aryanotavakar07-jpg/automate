@@ -74,7 +74,6 @@ async def process_lead(leadgen_id: str, queue: "asyncio.Queue" = None):
                     to_number=owner_number,
                     template_name=camp_cfg.get("alert_template_name", settings.ALERT_TEMPLATE_NAME),
                     body_params=[campaign, name, display_phone, answers_text],
-                    session_id=form_id,
                 )
                 logger.info(f"WhatsApp alert sent to campaign owner ({owner_number}) successfully")
             except Exception as wa_err:
@@ -89,7 +88,6 @@ async def process_lead(leadgen_id: str, queue: "asyncio.Queue" = None):
                     template_name=camp_cfg.get("client_template_name", settings.CLIENT_TEMPLATE_NAME),
                     body_params=[name, campaign, config_val],
                     custom_message=camp_cfg.get("client_welcome_message"),
-                    session_id=form_id,
                 )
                 logger.info(f"WhatsApp welcome message sent to client ({client_phone}) successfully")
             except Exception as client_wa_err:
