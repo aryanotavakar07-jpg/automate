@@ -60,15 +60,17 @@ async def root():
 
 
 @app.get("/qr")
-async def qr_page():
-    """Exposes the WhatsApp QR code login webpage on your live server URL."""
+@app.get("/qr/{session_id}")
+async def qr_page(session_id: str = None):
+    """Exposes the multi-account WhatsApp QR code login manager on your live server URL."""
+    url = f"http://localhost:3000/qr/{session_id}" if session_id else "http://localhost:3000/qr"
     async with httpx.AsyncClient(timeout=10) as client:
         try:
-            resp = await client.get("http://localhost:3000/qr")
+            resp = await client.get(url)
             return Response(content=resp.text, media_type="text/html")
         except Exception as e:
             return Response(
-                content=f"<h2 style='font-family:sans-serif;text-align:center;margin-top:20%;'>WhatsApp QR Service initializing... ({e})</h2><script>setTimeout(() => location.reload(), 3000);</script>",
+                content=f"<h2 style='font-family:sans-serif;text-align:center;margin-top:20%;'>WhatsApp Multi-Account QR Service initializing... ({e})</h2><script>setTimeout(() => location.reload(), 3000);</script>",
                 media_type="text/html",
             )
 

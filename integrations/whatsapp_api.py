@@ -7,8 +7,8 @@ logger = logging.getLogger("whatsapp_api")
 LOCAL_WA_URL = "http://localhost:3000/send-message"
 
 
-async def send_whatsapp_template(to_number: str, template_name: str, body_params: list[str], custom_message: str = None):
-    """Sends WhatsApp message via Meta Official Cloud API (if configured) or local Baileys QR service."""
+async def send_whatsapp_template(to_number: str, template_name: str, body_params: list[str], custom_message: str = None, session_id: str = None):
+    """Sends WhatsApp message via Meta Official Cloud API (if configured) or multi-session local Baileys QR service."""
     clean_phone = re.sub(r"\D", "", to_number)
     if clean_phone.startswith("0") and len(clean_phone) == 11:
         clean_phone = clean_phone[1:]
@@ -69,15 +69,14 @@ async def send_whatsapp_template(to_number: str, template_name: str, body_params
         except Exception as cloud_err:
             logger.warning(f"WhatsApp Cloud API send failed ({cloud_err}). Falling back to local Baileys QR service...")
 
-    # 3. Priority 2: 100% Free Local Baileys WhatsApp Engine
-    payload = {"to": clean_phone, "message": message_text}
+    # 3. Priority 2: Multi-Session Baileys WhatsApp Engine
+    payload = {"to": clean_phone, "message": message_text, "session": session_id}
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=8.0) as client:
             resp = await client.post(LOCAL_WA_URL, json=payload)
             resp.raise_for_status()
-            logger.info(f"WhatsApp message sent to {to_number} via local QR server")
+            logger.info(f"WhatsApp message sent to {to_number} via local QR server (Session: {session_id})")
             return resp.json()
     except Exception as err:
         logger.warning(f"WhatsApp message to {to_number} skipped/failed: {err}")
         return {"status": "skipped", "error": str(err)}
-
