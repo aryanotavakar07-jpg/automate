@@ -16,13 +16,13 @@ if (!fs.existsSync(SESSIONS_DIR)) {
     fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 }
 
-const sessions = {}; // key: sessionId -> { sock, qr, connected, name, sessionAuthDir }
+const sessions = {}; // key: sessionId -> { sock, qr, connected, pairingCode, sessionAuthDir }
 
-const KNOWN_SESSIONS = [
-    { id: '1032334999346283', name: 'Saidham Form (Phone: 9326340479)' },
-    { id: '1044971085049692', name: 'Silver 26 August Form (Phone: 9892749953)' },
-    { id: 'default', name: 'Default Backup Account' }
-];
+const KNOWN_CAMPAIGNS = {
+    '1032334999346283': { name: 'Saidham Form', defaultPhone: '919326340479' },
+    '1044971085049692': { name: 'Silver 26 August Form', defaultPhone: '919892749953' },
+    'default': { name: 'Default Backup Account', defaultPhone: '' }
+};
 
 async function resetAndCleanSession(sessionId) {
     const sessionKey = String(sessionId).trim();
@@ -59,6 +59,7 @@ async function initSession(sessionId) {
         id: sessionKey,
         sock: null,
         qr: null,
+        pairingCode: null,
         connected: false,
         sessionAuthDir: sessionAuthDir
     };
@@ -72,7 +73,7 @@ async function initSession(sessionId) {
             printQRInTerminal: false,
             connectTimeoutMs: 60000,
             defaultQueryTimeoutMs: 60000,
-            retryRequestDelayMs: 2000
+            keepAliveIntervalMs: 25000
         });
 
         sess.sock = sock;
@@ -82,55 +83,78 @@ async function initSession(sessionId) {
             const { connection, lastDisconnect, qr } = update;
             if (qr) {
                 sess.qr = qr;
-                console.log(`[WhatsApp - ${sessionKey}] New QR code generated successfully!`);
+                console.log(`[WhatsApp - ${sessionKey}] QR Code generated`);
             }
             if (connection === 'close') {
                 sess.connected = false;
                 sess.qr = null;
+                sess.pairingCode = null;
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 const errMsg = String(lastDisconnect?.error || '');
-                console.log(`[WhatsApp - ${sessionKey}] Connection closed. Code: ${statusCode}, Err: ${errMsg}`);
+                console.log(`[WhatsApp - ${sessionKey}] Disconnected (${statusCode}): ${errMsg}`);
 
                 if (statusCode === DisconnectReason.loggedOut || errMsg.includes('QR refs attempts ended') || statusCode === 401) {
-                    console.log(`[WhatsApp - ${sessionKey}] Resetting auth directory...`);
+                    console.log(`[WhatsApp - ${sessionKey}] Session invalid, resetting directory...`);
                     try { fs.rmSync(sessionAuthDir, { recursive: true, force: true }); } catch (e) {}
                 }
-                setTimeout(() => initSession(sessionKey), 4000);
+                setTimeout(() => initSession(sessionKey), 5000);
             } else if (connection === 'open') {
                 sess.connected = true;
                 sess.qr = null;
-                console.log(`\n======================================================`);
-                console.log(`[WhatsApp] SESSION ${sessionKey} CONNECTED SUCCESSFULLY!`);
-                console.log(`======================================================\n`);
+                sess.pairingCode = null;
+                console.log(`[WhatsApp - ${sessionKey}] CONNECTED ONLINE!`);
             }
         });
     } catch (err) {
-        console.error(`[WhatsApp - ${sessionKey}] Initialization error:`, err);
+        console.error(`[WhatsApp - ${sessionKey}] Init error:`, err);
         setTimeout(() => initSession(sessionKey), 5000);
     }
     return sess;
 }
 
-// Start all known sessions at launch
-KNOWN_SESSIONS.forEach(s => initSession(s.id));
+// Request Phone Number Pairing Code (Alternative to QR scan)
+app.get('/pair/:sessionId', async (req, res) => {
+    const sessionId = req.params.sessionId;
+    let phone = req.query.phone || (KNOWN_CAMPAIGNS[sessionId] ? KNOWN_CAMPAIGNS[sessionId].defaultPhone : '');
+    phone = phone.replace(/[^0-9]/g, '');
 
-// Main Dashboard
+    if (!phone) {
+        return res.status(400).send('Please provide phone parameter e.g. /pair/1032334999346283?phone=919326340479');
+    }
+
+    let sess = sessions[sessionId];
+    if (!sess || !sess.sock) {
+        sess = await initSession(sessionId);
+        await new Promise(r => setTimeout(r, 2000));
+    }
+
+    try {
+        const code = await sess.sock.requestPairingCode(phone);
+        sess.pairingCode = code;
+        res.json({ status: 'success', sessionId, phone, pairingCode: code });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Dashboard
 app.get('/qr', async (req, res) => {
-    let htmlCards = KNOWN_SESSIONS.map(item => {
-        const s = sessions[item.id] || {};
+    let htmlCards = Object.keys(KNOWN_CAMPAIGNS).map(id => {
+        const item = KNOWN_CAMPAIGNS[id];
+        const s = sessions[id] || {};
         const statusBadge = s.connected 
             ? `<span style="background:#2e7d32;color:white;padding:5px 14px;border-radius:20px;font-size:14px;font-weight:bold;">✅ Connected</span>`
-            : `<span style="background:#d32f2f;color:white;padding:5px 14px;border-radius:20px;font-size:14px;font-weight:bold;">⏳ Scan Required</span>`;
+            : `<span style="background:#d32f2f;color:white;padding:5px 14px;border-radius:20px;font-size:14px;font-weight:bold;">⏳ Login Required</span>`;
 
         return `
             <div style="background:white;padding:22px;border-radius:12px;box-shadow:0 3px 12px rgba(0,0,0,0.08);margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;">
                 <div style="text-align:left;">
                     <h3 style="margin:0 0 6px 0;color:#111;font-size:18px;">${item.name}</h3>
-                    <p style="margin:0;color:#666;font-size:13px;">Form ID: <code>${item.id}</code></p>
+                    <p style="margin:0;color:#666;font-size:13px;">Form ID: <code>${id}</code> | Target Phone: <b>${item.defaultPhone || 'Default'}</b></p>
                 </div>
                 <div>
                     ${statusBadge}
-                    <a href="/qr/${item.id}" style="margin-left:15px;background:#0070f3;color:white;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:14px;display:inline-block;">Open QR Page &rarr;</a>
+                    <a href="/qr/${id}" style="margin-left:15px;background:#0070f3;color:white;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:14px;display:inline-block;">Manage Login &rarr;</a>
                 </div>
             </div>
         `;
@@ -141,24 +165,17 @@ app.get('/qr', async (req, res) => {
             <head><title>WhatsApp Multi-Account Dashboard</title></head>
             <body style="font-family:sans-serif;background:#f4f6f9;margin:0;padding:40px 20px;">
                 <div style="max-width:700px;margin:0 auto;text-align:center;">
-                    <h1 style="color:#111;margin-bottom:10px;">📱 WhatsApp Multi-Account QR Manager</h1>
-                    <p style="color:#555;margin-bottom:30px;">Connect separate WhatsApp accounts for each Meta Lead Form campaign.</p>
+                    <h1 style="color:#111;margin-bottom:10px;">📱 WhatsApp Multi-Account Manager</h1>
+                    <p style="color:#555;margin-bottom:30px;">Connect separate WhatsApp accounts via QR Code or 8-Digit Pairing Code.</p>
                     ${htmlCards}
                 </div>
-                <script>setTimeout(() => location.reload(), 8000);</script>
+                <script>setTimeout(() => location.reload(), 10000);</script>
             </body>
         </html>
     `);
 });
 
-// Clean Reset Endpoint
-app.get('/qr/:sessionId/reset', async (req, res) => {
-    const sessionId = req.params.sessionId;
-    await resetAndCleanSession(sessionId);
-    res.redirect(`/qr/${sessionId}`);
-});
-
-// Single Session QR Page
+// Single Session Login Page (Supports both QR Code and 8-Digit Pairing Code)
 app.get('/qr/:sessionId', async (req, res) => {
     const sessionId = req.params.sessionId;
     let sess = sessions[sessionId];
@@ -166,17 +183,19 @@ app.get('/qr/:sessionId', async (req, res) => {
         sess = await initSession(sessionId);
     }
 
+    const campaign = KNOWN_CAMPAIGNS[sessionId] || { name: `Session ${sessionId}`, defaultPhone: '' };
+
     if (sess.connected) {
         return res.send(`
             <html>
-                <head><title>WhatsApp Session Connected</title></head>
+                <head><title>WhatsApp Connected - ${campaign.name}</title></head>
                 <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;margin:0;">
-                    <div style="background:white;padding:35px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;max-width:420px;">
-                        <h1 style="color:#2e7d32;margin-top:0;">✅ Connected!</h1>
-                        <p style="color:#444;font-size:16px;line-height:1.5;">WhatsApp Session for <b>${sessionId}</b> is active and sending messages.</p>
-                        <div style="margin-top:20px;">
-                            <a href="/qr" style="color:#0070f3;text-decoration:none;font-weight:bold;margin-right:15px;">&larr; Back to Dashboard</a>
-                            <a href="/qr/${sessionId}/reset" style="color:#d32f2f;text-decoration:none;font-size:13px;" onclick="return confirm('Disconnect and generate new QR?')">Logout / Reset</a>
+                    <div style="background:white;padding:35px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;max-width:440px;">
+                        <h1 style="color:#2e7d32;margin-top:0;">✅ WhatsApp Connected!</h1>
+                        <p style="color:#444;font-size:16px;line-height:1.5;">Account for <b>${campaign.name}</b> is active and sending instant lead messages.</p>
+                        <div style="margin-top:25px;">
+                            <a href="/qr" style="color:#0070f3;text-decoration:none;font-weight:bold;margin-right:20px;">&larr; Back to Dashboard</a>
+                            <a href="/qr/${sessionId}/reset" style="color:#d32f2f;text-decoration:none;font-size:13px;" onclick="return confirm('Disconnect and generate new login?')">Disconnect / Reset</a>
                         </div>
                     </div>
                 </body>
@@ -184,46 +203,59 @@ app.get('/qr/:sessionId', async (req, res) => {
         `);
     }
 
-    if (!sess.qr) {
-        return res.send(`
-            <html>
-                <head><title>Generating WhatsApp QR</title></head>
-                <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;margin:0;">
-                    <div style="background:white;padding:35px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;max-width:400px;">
-                        <h2 style="color:#333;margin-top:0;">⚡ Generating QR Code...</h2>
-                        <p style="color:#666;">Initializing fresh WhatsApp session for <code>${sessionId}</code>.</p>
-                        <a href="/qr/${sessionId}/reset" style="display:inline-block;margin-top:15px;background:#e0e0e0;color:#333;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;">🔄 Click to Reset Session</a>
-                    </div>
-                    <script>setTimeout(() => location.reload(), 3000);</script>
-                </body>
-            </html>
-        `);
+    let qrImageHtml = `<p style="color:#666;">Generating QR Code, please wait 3 seconds...</p><script>setTimeout(() => location.reload(), 3000);</script>`;
+    if (sess.qr) {
+        try {
+            const qrImage = await QRCode.toDataURL(sess.qr);
+            qrImageHtml = `<img src="${qrImage}" style="width:250px;height:250px;border:2px solid #25D366;border-radius:10px;padding:5px;background:white;"/>`;
+        } catch (e) {}
     }
 
-    try {
-        const qrImage = await QRCode.toDataURL(sess.qr);
-        res.send(`
-            <html>
-                <head><title>Scan QR for ${sessionId}</title></head>
-                <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;margin:0;">
-                    <div style="background:white;padding:30px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;max-width:380px;">
-                        <h2 style="color:#111;margin-top:0;margin-bottom:10px;">Scan with WhatsApp</h2>
-                        <p style="color:#555;font-size:14px;margin-bottom:20px;">Open WhatsApp &rarr; <b>Linked Devices</b> &rarr; <b>Link a Device</b></p>
-                        
-                        <img src="${qrImage}" style="width:260px;height:260px;border:2px solid #25D366;border-radius:10px;padding:5px;background:white;"/>
-                        
-                        <div style="margin-top:20px;display:flex;justify-content:space-between;align-items:center;">
-                            <a href="/qr" style="color:#0070f3;text-decoration:none;font-size:14px;font-weight:bold;">&larr; Dashboard</a>
-                            <a href="/qr/${sessionId}/reset" style="background:#ff4d4f;color:white;padding:6px 12px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:bold;">🔄 Reset QR</a>
-                        </div>
+    let pairCodeHtml = sess.pairingCode 
+        ? `<div style="background:#e8f5e9;border:1px solid #4caf50;padding:15px;border-radius:8px;margin-top:15px;"><span style="font-size:13px;color:#2e7d32;">8-Digit WhatsApp Pairing Code:</span><h2 style="font-family:monospace;font-size:32px;letter-spacing:4px;color:#1b5e20;margin:8px 0;">${sess.pairingCode}</h2><p style="font-size:12px;color:#555;margin:0;">Open WhatsApp &rarr; Linked Devices &rarr; Link with Phone Number &rarr; Enter Code</p></div>`
+        : ``;
+
+    res.send(`
+        <html>
+            <head><title>WhatsApp Login - ${campaign.name}</title></head>
+            <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;font-family:sans-serif;background:#f0f2f5;margin:0;padding:20px;">
+                <div style="background:white;padding:30px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;max-width:420px;width:100%;">
+                    <h2 style="color:#111;margin-top:0;margin-bottom:5px;">${campaign.name} Login</h2>
+                    <p style="color:#666;font-size:14px;margin-bottom:20px;">Choose Method 1 (QR Scan) or Method 2 (8-Digit Code)</p>
+
+                    <!-- METHOD 1: QR CODE SCAN -->
+                    <div style="border:1px solid #eee;padding:15px;border-radius:10px;background:#fafafa;margin-bottom:20px;">
+                        <h4 style="margin:0 0 10px 0;color:#333;">Method 1: Scan QR Code</h4>
+                        ${qrImageHtml}
+                        <p style="color:#888;font-size:12px;margin:10px 0 0 0;">Open WhatsApp &rarr; <b>Linked Devices</b> &rarr; <b>Link a Device</b></p>
                     </div>
-                    <script>setTimeout(() => location.reload(), 4000);</script>
-                </body>
-            </html>
-        `);
-    } catch (err) {
-        res.status(500).send('Error generating QR image');
-    }
+
+                    <!-- METHOD 2: 8-DIGIT PAIRING CODE -->
+                    <div style="border:1px solid #eee;padding:15px;border-radius:10px;background:#fafafa;margin-bottom:15px;">
+                        <h4 style="margin:0 0 10px 0;color:#333;">Method 2: Link via 8-Digit Code</h4>
+                        <form method="GET" action="/pair/${sessionId}" style="margin:0;">
+                            <input type="text" name="phone" value="${campaign.defaultPhone}" placeholder="91XXXXXXXXXX" style="width:70%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:14px;text-align:center;"/>
+                            <button type="submit" style="padding:8px 12px;background:#25D366;color:white;border:none;border-radius:6px;font-weight:bold;cursor:pointer;">Get Code</button>
+                        </form>
+                        ${pairCodeHtml}
+                    </div>
+
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:15px;">
+                        <a href="/qr" style="color:#0070f3;text-decoration:none;font-size:14px;font-weight:bold;">&larr; Dashboard</a>
+                        <a href="/qr/${sessionId}/reset" style="background:#ff4d4f;color:white;padding:6px 12px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:bold;">🔄 Reset Login</a>
+                    </div>
+                </div>
+                <script>setTimeout(() => { if(!document.querySelector('input:focus')) location.reload(); }, 5000);</script>
+            </body>
+        </html>
+    `);
+});
+
+// Single Session Reset
+app.get('/qr/:sessionId/reset', async (req, res) => {
+    const sessionId = req.params.sessionId;
+    await resetAndCleanSession(sessionId);
+    res.redirect(`/qr/${sessionId}`);
 });
 
 // Check status
@@ -256,7 +288,7 @@ app.post('/send-message', async (req, res) => {
     }
 
     if (!targetSess || !targetSess.sock) {
-        return res.status(503).json({ error: `WhatsApp session '${sessionKey}' is not connected yet. Please scan QR.` });
+        return res.status(503).json({ error: `WhatsApp session '${sessionKey}' is not connected yet.` });
     }
 
     try {
@@ -278,5 +310,5 @@ app.post('/send-message', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-    console.log(`[WhatsApp Multi-Account Service] Running on http://localhost:${PORT}`);
+    console.log(`[WhatsApp Multi-Account Manager] Server running on http://localhost:${PORT}`);
 });
