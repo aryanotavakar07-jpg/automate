@@ -1,4 +1,4 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const express = require('express');
 const cors = require('cors');
@@ -68,10 +68,11 @@ async function initSession(sessionId) {
         const { state, saveCreds } = await useMultiFileAuthState(sessionAuthDir);
         const sock = makeWASocket({
             auth: state,
-            browser: ['Lead Automation', 'Chrome', '1.0.0'],
+            browser: Browsers.ubuntu('Chrome'),
             printQRInTerminal: false,
-            connectTimeoutMs: 30000,
-            defaultQueryTimeoutMs: 30000
+            connectTimeoutMs: 60000,
+            defaultQueryTimeoutMs: 60000,
+            retryRequestDelayMs: 2000
         });
 
         sess.sock = sock;
