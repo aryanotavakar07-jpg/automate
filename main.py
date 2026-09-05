@@ -61,12 +61,14 @@ async def root():
 
 @app.get("/qr")
 @app.get("/qr/{session_id}")
-async def qr_page(session_id: str = None):
+@app.get("/qr/{session_id}/reset")
+async def qr_page(session_id: str = None, request: Request = None):
     """Exposes the multi-account WhatsApp QR code login manager on your live server URL."""
-    url = f"http://localhost:3000/qr/{session_id}" if session_id else "http://localhost:3000/qr"
+    path_suffix = "/reset" if request and request.url.path.endswith("/reset") else ""
+    url = f"http://localhost:3000/qr/{session_id}{path_suffix}" if session_id else "http://localhost:3000/qr"
     async with httpx.AsyncClient(timeout=10) as client:
         try:
-            resp = await client.get(url)
+            resp = await client.get(url, follow_redirects=True)
             return Response(content=resp.text, media_type="text/html")
         except Exception as e:
             return Response(

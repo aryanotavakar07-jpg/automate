@@ -12,21 +12,11 @@ app.use(express.json());
 const PORT = process.env.WA_PORT || 3000;
 const SESSIONS_DIR = path.join(__dirname, 'baileys_sessions');
 
-// Migrate old auth dir if exists
-const OLD_AUTH_DIR = path.join(__dirname, 'baileys_auth_info');
-if (fs.existsSync(OLD_AUTH_DIR) && !fs.existsSync(SESSIONS_DIR)) {
-    try {
-        fs.mkdirSync(SESSIONS_DIR, { recursive: true });
-        const defaultDir = path.join(SESSIONS_DIR, 'default');
-        fs.cpSync(OLD_AUTH_DIR, defaultDir, { recursive: true });
-    } catch (e) {}
-}
-
 if (!fs.existsSync(SESSIONS_DIR)) {
     fs.mkdirSync(SESSIONS_DIR, { recursive: true });
 }
 
-const sessions = {}; // key: sessionId -> { sock, qr, connected, name }
+const sessions = {}; // key: sessionId -> { sock, qr, connected, name, sessionAuthDir }
 
 const KNOWN_SESSIONS = [
     { id: '1032334999346283', name: 'Saidham Form (Phone: 9326340479)' },
@@ -34,30 +24,54 @@ const KNOWN_SESSIONS = [
     { id: 'default', name: 'Default Backup Account' }
 ];
 
-async function initSession(sessionId) {
-    if (sessions[sessionId] && sessions[sessionId].sock) {
-        return sessions[sessionId];
+async function resetAndCleanSession(sessionId) {
+    const sessionKey = String(sessionId).trim();
+    if (sessions[sessionKey]) {
+        try {
+            if (sessions[sessionKey].sock) {
+                sessions[sessionKey].sock.ev.removeAllListeners();
+                sessions[sessionKey].sock.end(undefined);
+            }
+        } catch (e) {}
+        delete sessions[sessionKey];
     }
 
-    const sessionAuthDir = path.join(SESSIONS_DIR, String(sessionId));
+    const sessionAuthDir = path.join(SESSIONS_DIR, sessionKey);
+    try {
+        fs.rmSync(sessionAuthDir, { recursive: true, force: true });
+    } catch (e) {}
+
+    return await initSession(sessionKey);
+}
+
+async function initSession(sessionId) {
+    const sessionKey = String(sessionId).trim();
+    if (sessions[sessionKey] && sessions[sessionKey].sock) {
+        return sessions[sessionKey];
+    }
+
+    const sessionAuthDir = path.join(SESSIONS_DIR, sessionKey);
     if (!fs.existsSync(sessionAuthDir)) {
         fs.mkdirSync(sessionAuthDir, { recursive: true });
     }
 
     const sess = {
-        id: String(sessionId),
+        id: sessionKey,
         sock: null,
         qr: null,
-        connected: false
+        connected: false,
+        sessionAuthDir: sessionAuthDir
     };
-    sessions[sessionId] = sess;
+    sessions[sessionKey] = sess;
 
     try {
         const { state, saveCreds } = await useMultiFileAuthState(sessionAuthDir);
         const sock = makeWASocket({
             auth: state,
-            browser: [`Lead Automation (${sessionId})`, 'Chrome', '1.0.0'],
-            printQRInTerminal: false
+            browser: ['Lead Automation', 'Chrome', '1.0.0'],
+            printQRInTerminal: false,
+            connectTimeoutMs: 30000,
+            defaultQueryTimeoutMs: 30000
         });
 
         sess.sock = sock;
@@ -67,55 +81,55 @@ async function initSession(sessionId) {
             const { connection, lastDisconnect, qr } = update;
             if (qr) {
                 sess.qr = qr;
-                console.log(`[WhatsApp - ${sessionId}] New QR generated for session ${sessionId}`);
+                console.log(`[WhatsApp - ${sessionKey}] New QR code generated successfully!`);
             }
             if (connection === 'close') {
                 sess.connected = false;
                 sess.qr = null;
                 const statusCode = lastDisconnect?.error?.output?.statusCode;
                 const errMsg = String(lastDisconnect?.error || '');
-                console.log(`[WhatsApp - ${sessionId}] Connection closed. Code: ${statusCode}, Err: ${errMsg}`);
-                
+                console.log(`[WhatsApp - ${sessionKey}] Connection closed. Code: ${statusCode}, Err: ${errMsg}`);
+
                 if (statusCode === DisconnectReason.loggedOut || errMsg.includes('QR refs attempts ended') || statusCode === 401) {
-                    console.log(`[WhatsApp - ${sessionId}] Resetting auth folder...`);
+                    console.log(`[WhatsApp - ${sessionKey}] Resetting auth directory...`);
                     try { fs.rmSync(sessionAuthDir, { recursive: true, force: true }); } catch (e) {}
                 }
-                setTimeout(() => initSession(sessionId), 4000);
+                setTimeout(() => initSession(sessionKey), 4000);
             } else if (connection === 'open') {
                 sess.connected = true;
                 sess.qr = null;
                 console.log(`\n======================================================`);
-                console.log(`[WhatsApp] SESSION ${sessionId} CONNECTED SUCCESSFULLY!`);
+                console.log(`[WhatsApp] SESSION ${sessionKey} CONNECTED SUCCESSFULLY!`);
                 console.log(`======================================================\n`);
             }
         });
     } catch (err) {
-        console.error(`[WhatsApp - ${sessionId}] Initialization error:`, err);
-        setTimeout(() => initSession(sessionId), 5000);
+        console.error(`[WhatsApp - ${sessionKey}] Initialization error:`, err);
+        setTimeout(() => initSession(sessionKey), 5000);
     }
     return sess;
 }
 
-// Start all known sessions at server launch
+// Start all known sessions at launch
 KNOWN_SESSIONS.forEach(s => initSession(s.id));
 
-// Main Dashboard for QR login links
+// Main Dashboard
 app.get('/qr', async (req, res) => {
     let htmlCards = KNOWN_SESSIONS.map(item => {
         const s = sessions[item.id] || {};
         const statusBadge = s.connected 
-            ? `<span style="background:#2e7d32;color:white;padding:4px 12px;border-radius:20px;font-size:14px;">✅ Connected</span>`
-            : `<span style="background:#d32f2f;color:white;padding:4px 12px;border-radius:20px;font-size:14px;">⏳ Scan Required</span>`;
+            ? `<span style="background:#2e7d32;color:white;padding:5px 14px;border-radius:20px;font-size:14px;font-weight:bold;">✅ Connected</span>`
+            : `<span style="background:#d32f2f;color:white;padding:5px 14px;border-radius:20px;font-size:14px;font-weight:bold;">⏳ Scan Required</span>`;
 
         return `
-            <div style="background:white;padding:20px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.08);margin-bottom:15px;display:flex;justify-content:space-between;align-items:center;">
+            <div style="background:white;padding:22px;border-radius:12px;box-shadow:0 3px 12px rgba(0,0,0,0.08);margin-bottom:18px;display:flex;justify-content:space-between;align-items:center;">
                 <div style="text-align:left;">
-                    <h3 style="margin:0 0 5px 0;color:#111;">${item.name}</h3>
+                    <h3 style="margin:0 0 6px 0;color:#111;font-size:18px;">${item.name}</h3>
                     <p style="margin:0;color:#666;font-size:13px;">Form ID: <code>${item.id}</code></p>
                 </div>
                 <div>
                     ${statusBadge}
-                    <a href="/qr/${item.id}" style="margin-left:15px;background:#0070f3;color:white;padding:8px 16px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px;">Open QR Page &rarr;</a>
+                    <a href="/qr/${item.id}" style="margin-left:15px;background:#0070f3;color:white;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:14px;display:inline-block;">Open QR Page &rarr;</a>
                 </div>
             </div>
         `;
@@ -136,7 +150,14 @@ app.get('/qr', async (req, res) => {
     `);
 });
 
-// Single Session QR page
+// Clean Reset Endpoint
+app.get('/qr/:sessionId/reset', async (req, res) => {
+    const sessionId = req.params.sessionId;
+    await resetAndCleanSession(sessionId);
+    res.redirect(`/qr/${sessionId}`);
+});
+
+// Single Session QR Page
 app.get('/qr/:sessionId', async (req, res) => {
     const sessionId = req.params.sessionId;
     let sess = sessions[sessionId];
@@ -149,10 +170,13 @@ app.get('/qr/:sessionId', async (req, res) => {
             <html>
                 <head><title>WhatsApp Session Connected</title></head>
                 <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;margin:0;">
-                    <div style="background:white;padding:35px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;max-width:400px;">
+                    <div style="background:white;padding:35px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;max-width:420px;">
                         <h1 style="color:#2e7d32;margin-top:0;">✅ Connected!</h1>
-                        <p style="color:#444;font-size:16px;">WhatsApp Session for <b>${sessionId}</b> is active and sending messages.</p>
-                        <a href="/qr" style="display:inline-block;margin-top:15px;color:#0070f3;text-decoration:none;">&larr; Back to Dashboard</a>
+                        <p style="color:#444;font-size:16px;line-height:1.5;">WhatsApp Session for <b>${sessionId}</b> is active and sending messages.</p>
+                        <div style="margin-top:20px;">
+                            <a href="/qr" style="color:#0070f3;text-decoration:none;font-weight:bold;margin-right:15px;">&larr; Back to Dashboard</a>
+                            <a href="/qr/${sessionId}/reset" style="color:#d32f2f;text-decoration:none;font-size:13px;" onclick="return confirm('Disconnect and generate new QR?')">Logout / Reset</a>
+                        </div>
                     </div>
                 </body>
             </html>
@@ -164,9 +188,10 @@ app.get('/qr/:sessionId', async (req, res) => {
             <html>
                 <head><title>Generating WhatsApp QR</title></head>
                 <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;margin:0;">
-                    <div style="background:white;padding:35px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;">
-                        <h2 style="color:#333;margin-top:0;">⚡ Generating QR Code for ${sessionId}...</h2>
-                        <p style="color:#666;">Please wait a few seconds, page will auto-refresh.</p>
+                    <div style="background:white;padding:35px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;max-width:400px;">
+                        <h2 style="color:#333;margin-top:0;">⚡ Generating QR Code...</h2>
+                        <p style="color:#666;">Initializing fresh WhatsApp session for <code>${sessionId}</code>.</p>
+                        <a href="/qr/${sessionId}/reset" style="display:inline-block;margin-top:15px;background:#e0e0e0;color:#333;padding:8px 16px;border-radius:6px;text-decoration:none;font-size:13px;">🔄 Click to Reset Session</a>
                     </div>
                     <script>setTimeout(() => location.reload(), 3000);</script>
                 </body>
@@ -180,14 +205,18 @@ app.get('/qr/:sessionId', async (req, res) => {
             <html>
                 <head><title>Scan QR for ${sessionId}</title></head>
                 <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:sans-serif;background:#f0f2f5;margin:0;">
-                    <div style="background:white;padding:30px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;">
-                        <h2 style="color:#111;margin-top:0;">Scan QR Code (Session: ${sessionId})</h2>
-                        <p style="color:#666;">Open WhatsApp &rarr; Settings/Menu &rarr; <b>Linked Devices</b> &rarr; <b>Link a Device</b></p>
-                        <img src="${qrImage}" style="width:280px;height:280px;border:1px solid #ddd;border-radius:8px;"/>
-                        <p style="color:#888;font-size:12px;margin-top:15px;">Auto-refreshes every 5 seconds</p>
-                        <a href="/qr" style="display:inline-block;margin-top:10px;color:#0070f3;text-decoration:none;">&larr; Back to Dashboard</a>
+                    <div style="background:white;padding:30px;border-radius:12px;box-shadow:0 4px 15px rgba(0,0,0,0.1);text-align:center;max-width:380px;">
+                        <h2 style="color:#111;margin-top:0;margin-bottom:10px;">Scan with WhatsApp</h2>
+                        <p style="color:#555;font-size:14px;margin-bottom:20px;">Open WhatsApp &rarr; <b>Linked Devices</b> &rarr; <b>Link a Device</b></p>
+                        
+                        <img src="${qrImage}" style="width:260px;height:260px;border:2px solid #25D366;border-radius:10px;padding:5px;background:white;"/>
+                        
+                        <div style="margin-top:20px;display:flex;justify-content:space-between;align-items:center;">
+                            <a href="/qr" style="color:#0070f3;text-decoration:none;font-size:14px;font-weight:bold;">&larr; Dashboard</a>
+                            <a href="/qr/${sessionId}/reset" style="background:#ff4d4f;color:white;padding:6px 12px;border-radius:6px;text-decoration:none;font-size:13px;font-weight:bold;">🔄 Reset QR</a>
+                        </div>
                     </div>
-                    <script>setTimeout(() => location.reload(), 5000);</script>
+                    <script>setTimeout(() => location.reload(), 4000);</script>
                 </body>
             </html>
         `);
@@ -196,7 +225,7 @@ app.get('/qr/:sessionId', async (req, res) => {
     }
 });
 
-// Endpoint to check status
+// Check status
 app.get('/status', (req, res) => {
     const statusMap = {};
     Object.keys(sessions).forEach(k => {
@@ -205,7 +234,7 @@ app.get('/status', (req, res) => {
     res.json({ sessions: statusMap });
 });
 
-// Endpoint to send WhatsApp message with session targeting
+// Send WhatsApp message
 app.post('/send-message', async (req, res) => {
     const { to, message, session } = req.body;
     if (!to || !message) {
@@ -213,12 +242,11 @@ app.post('/send-message', async (req, res) => {
     }
 
     let targetSess = null;
-    const sessionKey = session ? String(session).strip() : 'default';
+    const sessionKey = session ? String(session).trim() : 'default';
 
     if (sessions[sessionKey] && sessions[sessionKey].connected) {
         targetSess = sessions[sessionKey];
     } else {
-        // Fallback to any connected session if target session isn't connected yet
         const activeKey = Object.keys(sessions).find(k => sessions[k].connected);
         if (activeKey) {
             targetSess = sessions[activeKey];
