@@ -116,7 +116,9 @@ async def receive_webhook(request: Request):
                 leadgen_id = value.get("leadgen_id")
                 form_id = value.get("form_id")
 
-                if settings.ALLOWED_FORM_ID and form_id:
+                # Multi-campaign validation: If ALLOWED_FORM_ID is set in .env AND campaigns.json has specific forms,
+                # respect both. If form_id is present, enqueue the lead for background processing.
+                if settings.ALLOWED_FORM_ID and form_id and not settings.get_campaign_config(form_id).get("client_welcome_message"):
                     if str(form_id).strip() != str(settings.ALLOWED_FORM_ID).strip():
                         logger.info(f"Skipping lead {leadgen_id}: form_id {form_id} != ALLOWED_FORM_ID {settings.ALLOWED_FORM_ID}")
                         continue
@@ -125,7 +127,7 @@ async def receive_webhook(request: Request):
                     is_new = db.enqueue_lead(str(leadgen_id))
                     if is_new:
                         await lead_queue.put(str(leadgen_id))
-                        logger.info(f"Queued new lead {leadgen_id}")
+                        logger.info(f"Queued new lead {leadgen_id} (Form ID: {form_id})")
                     else:
                         logger.info(f"Duplicate webhook for lead {leadgen_id} ignored")
 
@@ -147,34 +149,59 @@ async def health():
 
 
 @app.api_route("/send-manual-lead", methods=["GET", "POST"])
-async def send_manual_lead(name: str = "Valued Lead", phone: str = "", configuration: str = "N/A", campaign: str = "Lead Form", force: bool = False):
-    """Allows manual lead processing (Airtable + Owner WhatsApp Alert + Client WhatsApp Welcome) with dedup protection."""
+async def send_manual_lead(
+    request: Request,
+    name: str = "Valued Lead",
+    phone: str = "",
+    configuration: str = "N/A",
+    campaign: str = "Lead Form",
+    form_id: str = None,
+    force: bool = False,
+    api_key: str = None
+):
+    """Allows manual lead processing (Airtable + Owner WhatsApp Alert + Client WhatsApp Welcome) with dedup protection and API auth."""
+    # Optional Auth check
+    if settings.API_SECRET_KEY:
+        header_key = request.headers.get("X-API-Key") or api_key
+        if header_key != settings.API_SECRET_KEY:
+            raise HTTPException(status_code=401, detail="Unauthorized API Key")
+
+    camp_cfg = settings.get_campaign_config(form_id)
+    target_campaign = campaign if campaign != "Lead Form" else camp_cfg.get("campaign_name", "Lead Form")
+    target_owner = camp_cfg.get("owner_whatsapp_number") or settings.OWNER_WHATSAPP_NUMBER
+    target_base = camp_cfg.get("airtable_base_id")
+    target_table = camp_cfg.get("airtable_table_name")
+
     # Dedup check
     if phone and not force:
-        if await lead_already_stored(phone):
+        if await lead_already_stored(phone, base_id=target_base, table_name=target_table):
             logger.info(f"Manual lead {phone} already processed/stored in Airtable. Skipping duplicate message.")
             return {"status": "skipped", "message": f"Lead for {phone} is already in Airtable. Message skipped to prevent duplicates."}
 
     # 1. Airtable
-    await create_airtable_record({
-        "Client Name": str(name),
-        "Phone Number": str(phone),
-        "Configuration": str(configuration),
-        "Remark": "",
-        "Campaign Name": str(campaign),
-    })
+    await create_airtable_record(
+        {
+            "Client Name": str(name),
+            "Phone Number": str(phone),
+            "Configuration": str(configuration),
+            "Remark": "",
+            "Campaign Name": str(target_campaign),
+        },
+        base_id=target_base,
+        table_name=target_table,
+    )
 
     owner_status = "skipped"
     client_status = "skipped"
 
     # 2. Owner Alert
-    if settings.OWNER_WHATSAPP_NUMBER:
+    if target_owner:
         try:
             answers_text = f"which_configuration_are_you_looking_for?: {configuration}"
             await send_whatsapp_template(
-                to_number=settings.OWNER_WHATSAPP_NUMBER,
-                template_name=settings.ALERT_TEMPLATE_NAME,
-                body_params=[campaign, name, phone or "Not provided", answers_text],
+                to_number=target_owner,
+                template_name=camp_cfg.get("alert_template_name", settings.ALERT_TEMPLATE_NAME),
+                body_params=[target_campaign, name, phone or "Not provided", answers_text],
             )
             owner_status = "sent"
         except Exception as e:
@@ -185,8 +212,9 @@ async def send_manual_lead(name: str = "Valued Lead", phone: str = "", configura
         try:
             await send_whatsapp_template(
                 to_number=phone,
-                template_name=settings.CLIENT_TEMPLATE_NAME,
-                body_params=[name, campaign, configuration],
+                template_name=camp_cfg.get("client_template_name", settings.CLIENT_TEMPLATE_NAME),
+                body_params=[name, target_campaign, configuration],
+                custom_message=camp_cfg.get("client_welcome_message"),
             )
             client_status = "sent"
         except Exception as e:
@@ -196,11 +224,12 @@ async def send_manual_lead(name: str = "Valued Lead", phone: str = "", configura
         "status": "success",
         "client_name": name,
         "phone": phone,
+        "campaign": target_campaign,
         "owner_whatsapp_alert": owner_status,
         "client_whatsapp_message": client_status
     }
 
 
-
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=settings.PORT)
+

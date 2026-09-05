@@ -5,12 +5,19 @@ from config import settings
 logger = logging.getLogger("airtable_api")
 
 
-async def lead_already_stored(identifier: str) -> bool:
+async def lead_already_stored(identifier: str, base_id: str = None, table_name: str = None) -> bool:
     """Checks Airtable for Phone Number or Client Name dedup. If Airtable API fails or hits rate limits,
     it returns False gracefully so WhatsApp messages are never blocked."""
     if not identifier:
         return False
-    url = f"https://api.airtable.com/v0/{settings.AIRTABLE_BASE_ID}/{settings.AIRTABLE_TABLE_NAME}"
+
+    target_base = base_id or settings.AIRTABLE_BASE_ID
+    target_table = table_name or settings.AIRTABLE_TABLE_NAME
+
+    if not target_base or not settings.AIRTABLE_API_KEY:
+        return False
+
+    url = f"https://api.airtable.com/v0/{target_base}/{target_table}"
     headers = {"Authorization": f"Bearer {settings.AIRTABLE_API_KEY}"}
     params = {"filterByFormula": f"OR({{Phone Number}}='{identifier}', {{Client Name}}='{identifier}')", "maxRecords": 1}
     try:
@@ -26,12 +33,15 @@ async def lead_already_stored(identifier: str) -> bool:
         return False
 
 
-async def create_airtable_record(fields: dict):
-    if not settings.AIRTABLE_BASE_ID or not settings.AIRTABLE_API_KEY:
+async def create_airtable_record(fields: dict, base_id: str = None, table_name: str = None):
+    target_base = base_id or settings.AIRTABLE_BASE_ID
+    target_table = table_name or settings.AIRTABLE_TABLE_NAME
+
+    if not target_base or not settings.AIRTABLE_API_KEY:
         logger.warning("AIRTABLE_BASE_ID or AIRTABLE_API_KEY is not set. Skipping Airtable record creation.")
         return None
 
-    url = f"https://api.airtable.com/v0/{settings.AIRTABLE_BASE_ID}/{settings.AIRTABLE_TABLE_NAME}"
+    url = f"https://api.airtable.com/v0/{target_base}/{target_table}"
     headers = {
         "Authorization": f"Bearer {settings.AIRTABLE_API_KEY}",
         "Content-Type": "application/json",
@@ -45,7 +55,7 @@ async def create_airtable_record(fields: dict):
             for attempt in range(max_attempts):
                 resp = await client.post(url, headers=headers, json={"fields": current_fields})
                 if resp.status_code in (200, 201):
-                    logger.info(f"Successfully created Airtable record for Client Name: {current_fields.get('Client Name')}")
+                    logger.info(f"Successfully created Airtable record in {target_table} for Client Name: {current_fields.get('Client Name')}")
                     return resp.json()
                 elif resp.status_code == 422 and "UNKNOWN_FIELD_NAME" in resp.text:
                     # Parse unknown field name from error response if possible
@@ -77,5 +87,6 @@ async def create_airtable_record(fields: dict):
     except Exception as e:
         logger.error(f"Airtable record creation exception: {e}")
         return None
+
 
 
